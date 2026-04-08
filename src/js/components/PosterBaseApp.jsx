@@ -193,17 +193,23 @@ const buildShipdayDraft = (order) => {
 };
 
 const buildShipdayPayload = (draft) => {
+    const normalizeText = (value) => {
+        const trimmedValue = String(value || '').trim();
+
+        return trimmedValue || undefined;
+    };
+
     const payload = {
-        orderNumber: draft.orderNumber,
-        orderItem: draft.orderItem,
+        orderNumber: String(draft.orderNumber || '').trim(),
+        orderItem: normalizeText(draft.orderItem),
         orderSource: 'Poster POS Service Bridge',
-        deliveryInstruction: draft.deliveryInstruction,
+        deliveryInstruction: normalizeText(draft.deliveryInstruction),
         delivery: {
-            name: draft.customerName,
-            phone: draft.customerPhone,
-            email: draft.customerEmail || undefined,
-            address: draft.deliveryAddress,
-            formattedAddress: draft.deliveryAddress,
+            name: normalizeText(draft.customerName),
+            phone: normalizeText(draft.customerPhone),
+            email: normalizeText(draft.customerEmail),
+            address: normalizeText(draft.deliveryAddress),
+            formattedAddress: normalizeText(draft.deliveryAddress),
         },
     };
 
@@ -211,8 +217,8 @@ const buildShipdayPayload = (draft) => {
         payload.orderTotal = Number(draft.orderTotal);
     }
 
-    if (draft.requestedDeliveryTime) {
-        payload.requestedDeliveryTime = draft.requestedDeliveryTime;
+    if (normalizeText(draft.requestedDeliveryTime)) {
+        payload.requestedDeliveryTime = normalizeText(draft.requestedDeliveryTime);
     }
 
     return payload;
@@ -359,6 +365,33 @@ class PosterBaseApp extends React.Component {
 
     async handleShipdaySend() {
         const { shipdayDraft } = this.state;
+        const missingFields = [];
+
+        if (!String(shipdayDraft.orderNumber || '').trim()) {
+            missingFields.push('order number');
+        }
+
+        if (!String(shipdayDraft.customerName || '').trim()) {
+            missingFields.push('імʼя клієнта');
+        }
+
+        if (!String(shipdayDraft.deliveryAddress || '').trim()) {
+            missingFields.push('адреса доставки');
+        }
+
+        if (missingFields.length) {
+            this.setState({
+                shipdayStatus: {
+                    state: 'error',
+                    label: 'Заповни поля',
+                    message: `Для тесту заповни: ${missingFields.join(', ')}.`,
+                    details: {
+                        missingFields,
+                    },
+                },
+            });
+            return;
+        }
 
         this.setState({
             shipdayStatus: {
@@ -383,11 +416,18 @@ class PosterBaseApp extends React.Component {
                 },
             });
         } catch (error) {
+            const responseIssues = error.response && Array.isArray(error.response.issues)
+                ? error.response.issues
+                : [];
+            const firstIssue = responseIssues.length
+                ? responseIssues[0].message
+                : null;
+
             this.setState({
                 shipdayStatus: {
                     state: 'error',
                     label: 'Помилка',
-                    message: error.message || 'Не вдалося відправити замовлення.',
+                    message: firstIssue || error.message || 'Не вдалося відправити замовлення.',
                     details: error.response || null,
                 },
             });
