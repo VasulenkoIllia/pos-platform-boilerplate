@@ -11,7 +11,7 @@ const APP_CONFIG = {
     },
     popup: {
         width: 540,
-        height: 620,
+        height: 760,
         title: 'POS Service Bridge',
     },
     externalService: {
