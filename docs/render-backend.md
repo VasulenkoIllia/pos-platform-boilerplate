@@ -37,7 +37,20 @@ npm run dev:backend
 - `BACKEND_PUBLIC_URL`
 - `POSTER_APPLICATION_ID`
 - `POSTER_APPLICATION_SECRET`
-- `SHIPDAY_API_KEY`
+
+`SHIPDAY_API_KEY` потрібен тільки для реальної відправки в Shipday. Для першого тесту можна лишити mock mode.
+
+## Mock режим для Shipday
+
+За замовчуванням у [render.yaml](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/render.yaml) увімкнено:
+
+- `SHIPDAY_MOCK_MODE=true`
+
+Поки реального `SHIPDAY_API_KEY` немає, backend:
+
+- не дзвонить у Shipday API
+- повертає тестову успішну відповідь
+- дозволяє перевірити UI та повний flow прямо в касі Poster
 
 ## Що вписати в Poster Developer
 

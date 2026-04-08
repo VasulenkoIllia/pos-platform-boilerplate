@@ -18,6 +18,8 @@ services:
         sync: false
       - key: SHIPDAY_API_KEY
         sync: false
+      - key: SHIPDAY_MOCK_MODE
+        value: "true"
       - key: SHIPDAY_PICKUP_NAME
         sync: false
       - key: SHIPDAY_PICKUP_PHONE

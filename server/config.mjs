@@ -54,6 +54,8 @@ const config = {
         apiBaseUrl: normalizeBaseUrl(process.env.SHIPDAY_API_BASE_URL || 'https://api.shipday.com'),
         apiKey: String(process.env.SHIPDAY_API_KEY || '').trim(),
         authMode: String(process.env.SHIPDAY_AUTH_MODE || 'x-api-key').trim(),
+        mockMode: String(process.env.SHIPDAY_MOCK_MODE || '').trim() === 'true'
+            || !String(process.env.SHIPDAY_API_KEY || '').trim(),
         timeoutMs: parseInteger(process.env.SHIPDAY_TIMEOUT_MS, 15000),
         defaultPickup: {
             name: String(process.env.SHIPDAY_PICKUP_NAME || '').trim(),
@@ -94,6 +96,10 @@ export const getMissingPosterAuthConfig = () => {
 };
 
 export const getMissingShipdayConfig = () => {
+    if (config.shipday.mockMode) {
+        return [];
+    }
+
     const missing = [];
 
     if (!config.shipday.apiKey) {

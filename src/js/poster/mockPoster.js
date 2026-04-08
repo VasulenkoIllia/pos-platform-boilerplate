@@ -17,6 +17,23 @@ const buildMockOrder = () => ({
         phone: '+380671112233',
         name: 'Local Preview Client',
     },
+    comment: 'Домофон 18, подзвонити за 5 хвилин.',
+    address: {
+        address1: 'вул. Саксаганського, 15',
+        city: 'Київ',
+    },
+    products: [
+        {
+            product_name: 'Pizza Pepperoni',
+            count: 2,
+            price: 18000,
+        },
+        {
+            product_name: 'Cola 0.5',
+            count: 1,
+            price: 6500,
+        },
+    ],
 });
 
 const cloneValue = value => JSON.parse(JSON.stringify(value));

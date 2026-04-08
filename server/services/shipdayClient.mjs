@@ -122,6 +122,45 @@ export const normalizeShipdayOrderPayload = ({
     return normalizedPayload;
 };
 
+export const createMockShipdayOrder = async ({
+    payload,
+}) => {
+    const createdAt = new Date().toISOString();
+
+    return {
+        ok: true,
+        status: 201,
+        body: {
+            success: true,
+            mock: true,
+            orderNumber: payload.orderNumber,
+            trackingId: `mock-${payload.orderNumber}`,
+            status: 'NOT_ASSIGNED',
+            delivery: payload.delivery,
+            pickup: payload.pickup,
+            requestedDeliveryTime: payload.requestedDeliveryTime || null,
+            estimatedPickupTime: payload.requestedPickupTime || null,
+            createdAt,
+            message: 'Mock Shipday order created. Реальний API key ще не підключений.',
+        },
+    };
+};
+
+export const getMockShipdayOrder = async ({
+    orderNumber,
+}) => ({
+    ok: true,
+    status: 200,
+    body: {
+        success: true,
+        mock: true,
+        orderNumber,
+        trackingId: `mock-${orderNumber}`,
+        status: 'NOT_ASSIGNED',
+        message: 'Mock Shipday order details.',
+    },
+});
+
 const buildShipdayHeaders = ({
     apiKey,
     authMode,

@@ -17,12 +17,20 @@ import {
     getExternalServiceConfigSummary,
     getExternalServiceStatus,
 } from '../services/externalService';
+import sendOrderToShipday from '../services/shipdayBridge';
 
 const INITIAL_SERVICE_STATUS = {
     state: 'checking',
     label: 'Ініціалізація',
     message: 'Збираю стартовий стан інтеграції...',
     checkedEndpoint: null,
+    details: null,
+};
+
+const INITIAL_SHIPDAY_STATUS = {
+    state: 'idle',
+    label: 'Не відправляли',
+    message: 'Підготуй дані замовлення і натисни кнопку відправки.',
     details: null,
 };
 
@@ -110,6 +118,122 @@ const getPosterConnectionLabel = (posterMode) => {
     return 'Поза Poster';
 };
 
+const normalizeMoneyValue = (value) => {
+    if (value === null || value === undefined || value === '') {
+        return '';
+    }
+
+    const numericValue = Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+        return '';
+    }
+
+    if (Number.isInteger(numericValue) && Math.abs(numericValue) >= 1000) {
+        return (numericValue / 100).toFixed(2);
+    }
+
+    return numericValue.toFixed(2);
+};
+
+const findAddressString = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    if (typeof order.delivery_address === 'string') {
+        return order.delivery_address;
+    }
+
+    if (typeof order.address === 'string') {
+        return order.address;
+    }
+
+    if (order.address && typeof order.address === 'object') {
+        return [
+            order.address.address1,
+            order.address.address2,
+            order.address.city,
+        ].filter(Boolean).join(', ');
+    }
+
+    return '';
+};
+
+const findProductsSummary = (order) => {
+    const products = order && (order.products || order.items || []);
+
+    if (!Array.isArray(products) || !products.length) {
+        return '';
+    }
+
+    return products.map((item) => {
+        const name = item.product_name || item.name || 'Товар';
+        const quantity = item.count || item.quantity || 1;
+
+        return `${name} x${quantity}`;
+    }).join(', ');
+};
+
+const buildShipdayDraft = (order) => {
+    const draftOrderNumber = getOrderId(order) || `MANUAL-${Date.now()}`;
+    const client = order && order.client ? order.client : {};
+
+    return {
+        orderNumber: String(draftOrderNumber),
+        customerName: client.name || '',
+        customerPhone: client.phone || '',
+        customerEmail: client.email || '',
+        deliveryAddress: findAddressString(order),
+        deliveryInstruction: (order && (order.comment || order.deliveryComment)) || '',
+        orderItem: findProductsSummary(order),
+        orderTotal: normalizeMoneyValue(order && (order.totalSum || order.total || order.sum)),
+        requestedDeliveryTime: '',
+    };
+};
+
+const buildShipdayPayload = (draft) => {
+    const payload = {
+        orderNumber: draft.orderNumber,
+        orderItem: draft.orderItem,
+        orderSource: 'Poster POS Service Bridge',
+        deliveryInstruction: draft.deliveryInstruction,
+        delivery: {
+            name: draft.customerName,
+            phone: draft.customerPhone,
+            email: draft.customerEmail || undefined,
+            address: draft.deliveryAddress,
+            formattedAddress: draft.deliveryAddress,
+        },
+    };
+
+    if (draft.orderTotal) {
+        payload.orderTotal = Number(draft.orderTotal);
+    }
+
+    if (draft.requestedDeliveryTime) {
+        payload.requestedDeliveryTime = draft.requestedDeliveryTime;
+    }
+
+    return payload;
+};
+
+const getShipdayStatusChipState = (shipdayStatus) => {
+    if (shipdayStatus.state === 'success') {
+        return 'connected';
+    }
+
+    if (shipdayStatus.state === 'sending') {
+        return 'checking';
+    }
+
+    if (shipdayStatus.state === 'error') {
+        return 'error';
+    }
+
+    return 'not-configured';
+};
+
 class PosterBaseApp extends React.Component {
     constructor(props) {
         super(props);
@@ -121,11 +245,14 @@ class PosterBaseApp extends React.Component {
             environment,
             isRefreshing: false,
             lastLaunchContext: null,
+            lastOrderSnapshot: null,
             popupOpen: !isPosterAvailable(),
             posterDebugState: getPosterDebugState(),
             posterMode: getPosterMode(),
             runtimeLabel: getRuntimeLabel(environment),
             serviceStatus: INITIAL_SERVICE_STATUS,
+            shipdayDraft: buildShipdayDraft(null),
+            shipdayStatus: INITIAL_SHIPDAY_STATUS,
         };
 
         this.isMountedFlag = false;
@@ -136,6 +263,8 @@ class PosterBaseApp extends React.Component {
         this.handleMockRuntimeChange = this.handleMockRuntimeChange.bind(this);
         this.handlePopupClosed = this.handlePopupClosed.bind(this);
         this.refreshStatus = this.refreshStatus.bind(this);
+        this.handleShipdayDraftChange = this.handleShipdayDraftChange.bind(this);
+        this.handleShipdaySend = this.handleShipdaySend.bind(this);
         this.syncPosterContext = this.syncPosterContext.bind(this);
     }
 
@@ -158,13 +287,17 @@ class PosterBaseApp extends React.Component {
 
     handleApplicationIconClicked(data) {
         openPosterPopup(APP_CONFIG.popup);
+        const order = data && data.order ? data.order : null;
 
         this.setState({
             lastLaunchContext: {
-                orderId: getOrderId(data && data.order),
+                orderId: getOrderId(order),
                 place: data && data.place ? data.place : 'unknown',
             },
+            lastOrderSnapshot: order,
             popupOpen: true,
+            shipdayDraft: buildShipdayDraft(order),
+            shipdayStatus: INITIAL_SHIPDAY_STATUS,
         });
     }
 
@@ -211,6 +344,54 @@ class PosterBaseApp extends React.Component {
     handleMockRuntimeChange(runtimeKey) {
         setPosterMockEnvironment(runtimeKey);
         this.syncPosterContext();
+    }
+
+    handleShipdayDraftChange(event) {
+        const { name, value } = event.target;
+
+        this.setState(prevState => ({
+            shipdayDraft: {
+                ...prevState.shipdayDraft,
+                [name]: value,
+            },
+        }));
+    }
+
+    async handleShipdaySend() {
+        const { shipdayDraft } = this.state;
+
+        this.setState({
+            shipdayStatus: {
+                state: 'sending',
+                label: 'Відправка',
+                message: 'Надсилаю замовлення в Shipday bridge...',
+                details: null,
+            },
+        });
+
+        try {
+            const result = await sendOrderToShipday(buildShipdayPayload(shipdayDraft));
+
+            this.setState({
+                shipdayStatus: {
+                    state: 'success',
+                    label: result.mode === 'mock' ? 'Mock success' : 'Відправлено',
+                    message: result.mode === 'mock'
+                        ? 'Backend підтвердив тестову Shipday-відправку без реального API key.'
+                        : 'Shipday прийняв замовлення.',
+                    details: result,
+                },
+            });
+        } catch (error) {
+            this.setState({
+                shipdayStatus: {
+                    state: 'error',
+                    label: 'Помилка',
+                    message: error.message || 'Не вдалося відправити замовлення.',
+                    details: error.response || null,
+                },
+            });
+        }
     }
 
     async refreshStatus() {
@@ -285,15 +466,32 @@ class PosterBaseApp extends React.Component {
         );
     }
 
+    renderShipdayDetails() {
+        const { shipdayStatus } = this.state;
+
+        if (!shipdayStatus.details) {
+            return null;
+        }
+
+        return (
+            <pre className="service-json">
+                {JSON.stringify(shipdayStatus.details, null, 2)}
+            </pre>
+        );
+    }
+
     render() {
         const {
             checkedAt,
             environment,
             isRefreshing,
+            lastOrderSnapshot,
             posterDebugState,
             posterMode,
             runtimeLabel,
             serviceStatus,
+            shipdayDraft,
+            shipdayStatus,
         } = this.state;
 
         const activePlatforms = Object.keys(environment).filter(key => environment[key]);
@@ -308,6 +506,10 @@ class PosterBaseApp extends React.Component {
         const recommendedCallStrategy = APP_CONFIG.externalService.requireBackendProxy
             ? 'Через backend/proxy'
             : 'Прямий виклик';
+        const orderContextSummary = lastOrderSnapshot
+            ? (lastOrderSnapshot.tableName || lastOrderSnapshot.spotName || 'Замовлення в контексті')
+            : 'Поза контекстом замовлення';
+        const shipdayStatusChipState = getShipdayStatusChipState(shipdayStatus);
 
         return (
             <div className="poster-base-app">
@@ -388,6 +590,135 @@ class PosterBaseApp extends React.Component {
                             {this.renderServiceDetails()}
                         </section>
                     </div>
+
+                    <section className="info-card info-card--highlight">
+                        <div className="info-card__header">
+                            <h2>Shipday test send</h2>
+                            <div className={getStatusClassName(shipdayStatusChipState)}>
+                                {shipdayStatus.label}
+                            </div>
+                        </div>
+
+                        <p className="info-card__meta">
+                            Перший етап інтеграції: вручну відправляємо замовлення в backend.
+                            Без `SHIPDAY_API_KEY` backend поверне mock success, щоб можна було тестувати UI прямо в касі.
+                        </p>
+
+                        <div className="details-list">
+                            <div className="details-list__row">
+                                <span>Контекст</span>
+                                <strong>{orderContextSummary}</strong>
+                            </div>
+                            <div className="details-list__row">
+                                <span>Backend URL</span>
+                                <strong>{APP_CONFIG.externalService.baseUrl || 'Ще не зібрано з Render URL'}</strong>
+                            </div>
+                        </div>
+
+                        <div className="shipday-form">
+                            <label className="shipday-form__field" htmlFor="shipday-order-number">
+                                <span>Order number</span>
+                                <input
+                                    id="shipday-order-number"
+                                    className="form-control"
+                                    name="orderNumber"
+                                    value={shipdayDraft.orderNumber}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field" htmlFor="shipday-customer-name">
+                                <span>Клієнт</span>
+                                <input
+                                    id="shipday-customer-name"
+                                    className="form-control"
+                                    name="customerName"
+                                    value={shipdayDraft.customerName}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field" htmlFor="shipday-customer-phone">
+                                <span>Телефон</span>
+                                <input
+                                    id="shipday-customer-phone"
+                                    className="form-control"
+                                    name="customerPhone"
+                                    value={shipdayDraft.customerPhone}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-address">
+                                <span>Адреса доставки</span>
+                                <input
+                                    id="shipday-delivery-address"
+                                    className="form-control"
+                                    name="deliveryAddress"
+                                    value={shipdayDraft.deliveryAddress}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
+                                <span>Позиції</span>
+                                <input
+                                    id="shipday-order-item"
+                                    className="form-control"
+                                    name="orderItem"
+                                    value={shipdayDraft.orderItem}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field" htmlFor="shipday-order-total">
+                                <span>Сума</span>
+                                <input
+                                    id="shipday-order-total"
+                                    className="form-control"
+                                    name="orderTotal"
+                                    value={shipdayDraft.orderTotal}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+
+                            <label className="shipday-form__field" htmlFor="shipday-requested-time">
+                                <span>Бажаний час</span>
+                                <input
+                                    id="shipday-requested-time"
+                                    className="form-control"
+                                    name="requestedDeliveryTime"
+                                    value={shipdayDraft.requestedDeliveryTime}
+                                    onChange={this.handleShipdayDraftChange}
+                                    placeholder="2026-04-08T23:30:00+03:00"
+                                />
+                            </label>
+
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
+                                <span>Інструкція курʼєру</span>
+                                <input
+                                    id="shipday-delivery-instruction"
+                                    className="form-control"
+                                    name="deliveryInstruction"
+                                    value={shipdayDraft.deliveryInstruction}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+                        </div>
+
+                        <div className="mock-controls">
+                            <button
+                                type="button"
+                                className="btn btn-success"
+                                onClick={this.handleShipdaySend}
+                            >
+                                Відправити в Shipday
+                            </button>
+                            <span className="shipday-form__hint">{shipdayStatus.message}</span>
+                        </div>
+
+                        {this.renderShipdayDetails()}
+                    </section>
 
                     {posterMode === 'mock' && (
                         <section className="info-card info-card--highlight">

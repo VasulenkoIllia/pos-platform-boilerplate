@@ -24,7 +24,9 @@ import {
     toInstallationRecord,
 } from './services/posterAuth.mjs';
 import {
+    createMockShipdayOrder,
     createShipdayOrder,
+    getMockShipdayOrder,
     getShipdayOrder,
     normalizeShipdayOrderPayload,
 } from './services/shipdayClient.mjs';
@@ -123,6 +125,7 @@ export const createApp = () => {
             },
             shipday: {
                 configured: Boolean(config.shipday.apiKey),
+                mockMode: config.shipday.mockMode,
                 apiBaseUrl: config.shipday.apiBaseUrl,
                 authMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
@@ -270,16 +273,19 @@ export const createApp = () => {
                 input: request.body,
                 defaultPickup: config.shipday.defaultPickup,
             });
-            const shipdayResponse = await createShipdayOrder({
-                apiBaseUrl: config.shipday.apiBaseUrl,
-                apiKey: config.shipday.apiKey,
-                authMode: config.shipday.authMode,
-                timeoutMs: config.shipday.timeoutMs,
-                payload,
-            });
+            const shipdayResponse = config.shipday.mockMode
+                ? await createMockShipdayOrder({ payload })
+                : await createShipdayOrder({
+                    apiBaseUrl: config.shipday.apiBaseUrl,
+                    apiKey: config.shipday.apiKey,
+                    authMode: config.shipday.authMode,
+                    timeoutMs: config.shipday.timeoutMs,
+                    payload,
+                });
 
             response.status(shipdayResponse.ok ? 201 : shipdayResponse.status).json({
                 ok: shipdayResponse.ok,
+                mode: config.shipday.mockMode ? 'mock' : 'live',
                 requestPayload: payload,
                 shipday: shipdayResponse.body,
             });
@@ -301,16 +307,21 @@ export const createApp = () => {
         }
 
         try {
-            const shipdayResponse = await getShipdayOrder({
-                apiBaseUrl: config.shipday.apiBaseUrl,
-                apiKey: config.shipday.apiKey,
-                authMode: config.shipday.authMode,
-                timeoutMs: config.shipday.timeoutMs,
-                orderNumber: request.params.orderNumber,
-            });
+            const shipdayResponse = config.shipday.mockMode
+                ? await getMockShipdayOrder({
+                    orderNumber: request.params.orderNumber,
+                })
+                : await getShipdayOrder({
+                    apiBaseUrl: config.shipday.apiBaseUrl,
+                    apiKey: config.shipday.apiKey,
+                    authMode: config.shipday.authMode,
+                    timeoutMs: config.shipday.timeoutMs,
+                    orderNumber: request.params.orderNumber,
+                });
 
             response.status(shipdayResponse.ok ? 200 : shipdayResponse.status).json({
                 ok: shipdayResponse.ok,
+                mode: config.shipday.mockMode ? 'mock' : 'live',
                 shipday: shipdayResponse.body,
             });
         } catch (error) {
