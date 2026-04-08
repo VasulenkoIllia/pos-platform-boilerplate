@@ -68,6 +68,17 @@ const config = {
     },
 };
 
+if (config.shipday.mockMode) {
+    config.shipday.defaultPickup = {
+        name: config.shipday.defaultPickup.name || 'Poster Test Pickup',
+        phone: config.shipday.defaultPickup.phone || '+380000000000',
+        address: config.shipday.defaultPickup.address || 'Kyiv, Test Pickup 1',
+        formattedAddress: config.shipday.defaultPickup.formattedAddress || 'Kyiv, Test Pickup 1',
+        lat: config.shipday.defaultPickup.lat,
+        lng: config.shipday.defaultPickup.lng,
+    };
+}
+
 config.urls = {
     connect: toUrl(config.backendPublicUrl, config.poster.connectPath),
     oauthStart: toUrl(config.backendPublicUrl, config.poster.oauthStartPath),

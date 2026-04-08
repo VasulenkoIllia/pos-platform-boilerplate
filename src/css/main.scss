@@ -108,6 +108,22 @@ html, html body {
         }
     }
 
+    .poster-base-app__compact-header {
+        display: flex;
+        gap: 16px;
+        justify-content: space-between;
+        align-items: flex-start;
+
+        h1 {
+            margin-bottom: 8px;
+        }
+
+        p {
+            color: #5c6978;
+            max-width: 560px;
+        }
+    }
+
     .poster-base-app__refresh {
         min-width: 165px;
         white-space: nowrap;
@@ -276,6 +292,7 @@ html, html body {
         }
 
         .poster-base-app__hero,
+        .poster-base-app__compact-header,
         .info-card__header,
         .details-list__row,
         .mock-controls,

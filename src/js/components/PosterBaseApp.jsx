@@ -41,19 +41,6 @@ const MOCK_RUNTIME_OPTIONS = [
     { key: 'iOS', label: 'iPad' },
 ];
 
-const getStatusClassName = (state) => {
-    switch (state) {
-    case 'connected':
-        return 'status-chip status-chip--success';
-    case 'checking':
-        return 'status-chip status-chip--neutral';
-    case 'error':
-        return 'status-chip status-chip--danger';
-    default:
-        return 'status-chip status-chip--warning';
-    }
-};
-
 const formatLaunchPlace = (place) => {
     if (place === 'order') {
         return 'Екран замовлення';
@@ -82,18 +69,6 @@ const formatCheckedAt = (checkedAt) => {
     return checkedAt.toLocaleString('uk-UA');
 };
 
-const getPosterModeLabel = (posterMode) => {
-    if (posterMode === 'real') {
-        return 'Poster runtime знайдено';
-    }
-
-    if (posterMode === 'mock') {
-        return 'Poster mock mode';
-    }
-
-    return 'Preview mode';
-};
-
 const getPosterModeBadgeClassName = (posterMode) => {
     if (posterMode === 'real') {
         return 'status-chip status-chip--success';
@@ -104,18 +79,6 @@ const getPosterModeBadgeClassName = (posterMode) => {
     }
 
     return 'status-chip status-chip--warning';
-};
-
-const getPosterConnectionLabel = (posterMode) => {
-    if (posterMode === 'real') {
-        return 'Реальний Poster container';
-    }
-
-    if (posterMode === 'mock') {
-        return 'Локальний mock runtime';
-    }
-
-    return 'Поза Poster';
 };
 
 const normalizeMoneyValue = (value) => {
@@ -183,12 +146,10 @@ const buildShipdayDraft = (order) => {
         orderNumber: String(draftOrderNumber),
         customerName: client.name || '',
         customerPhone: client.phone || '',
-        customerEmail: client.email || '',
         deliveryAddress: findAddressString(order),
         deliveryInstruction: (order && (order.comment || order.deliveryComment)) || '',
         orderItem: findProductsSummary(order),
         orderTotal: normalizeMoneyValue(order && (order.totalSum || order.total || order.sum)),
-        requestedDeliveryTime: '',
     };
 };
 
@@ -207,7 +168,6 @@ const buildShipdayPayload = (draft) => {
         delivery: {
             name: normalizeText(draft.customerName),
             phone: normalizeText(draft.customerPhone),
-            email: normalizeText(draft.customerEmail),
             address: normalizeText(draft.deliveryAddress),
             formattedAddress: normalizeText(draft.deliveryAddress),
         },
@@ -217,27 +177,7 @@ const buildShipdayPayload = (draft) => {
         payload.orderTotal = Number(draft.orderTotal);
     }
 
-    if (normalizeText(draft.requestedDeliveryTime)) {
-        payload.requestedDeliveryTime = normalizeText(draft.requestedDeliveryTime);
-    }
-
     return payload;
-};
-
-const getShipdayStatusChipState = (shipdayStatus) => {
-    if (shipdayStatus.state === 'success') {
-        return 'connected';
-    }
-
-    if (shipdayStatus.state === 'sending') {
-        return 'checking';
-    }
-
-    if (shipdayStatus.state === 'error') {
-        return 'error';
-    }
-
-    return 'not-configured';
 };
 
 class PosterBaseApp extends React.Component {
@@ -526,6 +466,7 @@ class PosterBaseApp extends React.Component {
             environment,
             isRefreshing,
             lastOrderSnapshot,
+            lastLaunchContext,
             posterDebugState,
             posterMode,
             runtimeLabel,
@@ -543,115 +484,56 @@ class PosterBaseApp extends React.Component {
         const mockRegisteredIcons = posterDebugState
             ? Object.keys(posterDebugState.registeredIcons || {}).join(', ')
             : 'Немає';
-        const recommendedCallStrategy = APP_CONFIG.externalService.requireBackendProxy
-            ? 'Через backend/proxy'
-            : 'Прямий виклик';
         const orderContextSummary = lastOrderSnapshot
             ? (lastOrderSnapshot.tableName || lastOrderSnapshot.spotName || 'Замовлення в контексті')
             : 'Поза контекстом замовлення';
-        const shipdayStatusChipState = getShipdayStatusChipState(shipdayStatus);
+        const contextPlace = lastLaunchContext && lastLaunchContext.place
+            ? formatLaunchPlace(lastLaunchContext.place)
+            : 'Меню функцій';
+        const shipdayActionLabel = shipdayStatus.state === 'sending'
+            ? 'Відправка...'
+            : 'Відправити в Shipday';
 
         return (
             <div className="poster-base-app">
                 <div className="poster-base-app__panel">
-                    <div className="poster-base-app__hero">
-                        <div>
-                            <div className={getPosterModeBadgeClassName(posterMode)}>
-                                {getPosterModeLabel(posterMode)}
-                            </div>
-                            <h1>{APP_CONFIG.name}</h1>
-                            <p>{APP_CONFIG.description}</p>
-                        </div>
-
-                        <button
-                            type="button"
-                            className="btn btn-primary poster-base-app__refresh"
-                            onClick={this.refreshStatus}
-                            disabled={isRefreshing}
-                        >
-                            {isRefreshing ? 'Оновлення...' : 'Оновити статус'}
-                        </button>
-                    </div>
-
-                    <div className="poster-base-app__grid">
-                        <section className="info-card">
-                            <div className="info-card__header">
-                                <h2>Poster runtime</h2>
-                                <div className={getPosterModeBadgeClassName(posterMode)}>
-                                    {runtimeLabel}
-                                </div>
-                            </div>
-
-                            <div className="details-list">
-                                <div className="details-list__row">
-                                    <span>Стан контейнера</span>
-                                    <strong>{getPosterConnectionLabel(posterMode)}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Активні платформи</span>
-                                    <strong>{activePlatforms.length ? activePlatforms.join(', ') : 'Невідомо'}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Іконки застосунку</span>
-                                    <strong>{activeIconLocations}</strong>
-                                </div>
-                            </div>
-
-                            {this.renderLaunchContext()}
-                        </section>
-
-                        <section className="info-card">
-                            <div className="info-card__header">
-                                <h2>Зовнішній сервіс</h2>
-                                <div className={getStatusClassName(serviceStatus.state)}>
-                                    {serviceStatus.label}
-                                </div>
-                            </div>
-
-                            <p className="info-card__meta">
-                                {serviceStatus.message}
-                            </p>
-
-                            <div className="details-list">
-                                <div className="details-list__row">
-                                    <span>Health endpoint</span>
-                                    <strong>{healthEndpoint}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Остання перевірка</span>
-                                    <strong>{formatCheckedAt(checkedAt)}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Рекомендована схема</span>
-                                    <strong>{recommendedCallStrategy}</strong>
-                                </div>
-                            </div>
-
-                            {this.renderServiceDetails()}
-                        </section>
-                    </div>
-
                     <section className="info-card info-card--highlight">
-                        <div className="info-card__header">
-                            <h2>Shipday test send</h2>
-                            <div className={getStatusClassName(shipdayStatusChipState)}>
-                                {shipdayStatus.label}
+                        <div className="poster-base-app__compact-header">
+                            <div>
+                                <div className={getPosterModeBadgeClassName(posterMode)}>
+                                    {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
+                                </div>
+                                <h1>{APP_CONFIG.name}</h1>
+                                <p>
+                                    Мінімальний екран інтеграції для відправки доставки в Shipday.
+                                </p>
                             </div>
+                            <button
+                                type="button"
+                                className="btn btn-outline-primary poster-base-app__refresh"
+                                onClick={this.refreshStatus}
+                                disabled={isRefreshing}
+                            >
+                                {isRefreshing ? 'Оновлення...' : 'Оновити'}
+                            </button>
                         </div>
-
-                        <p className="info-card__meta">
-                            Перший етап інтеграції: вручну відправляємо замовлення в backend.
-                            Без `SHIPDAY_API_KEY` backend поверне mock success, щоб можна було тестувати UI прямо в касі.
-                        </p>
 
                         <div className="details-list">
+                            <div className="details-list__row">
+                                <span>Джерело</span>
+                                <strong>{contextPlace}</strong>
+                            </div>
+                            <div className="details-list__row">
+                                <span>Замовлення</span>
+                                <strong>{shipdayDraft.orderNumber}</strong>
+                            </div>
                             <div className="details-list__row">
                                 <span>Контекст</span>
                                 <strong>{orderContextSummary}</strong>
                             </div>
                             <div className="details-list__row">
-                                <span>Backend URL</span>
-                                <strong>{APP_CONFIG.externalService.baseUrl || 'Ще не зібрано з Render URL'}</strong>
+                                <span>Backend</span>
+                                <strong>{serviceStatus.label}</strong>
                             </div>
                         </div>
 
@@ -701,7 +583,7 @@ class PosterBaseApp extends React.Component {
                             </label>
 
                             <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
-                                <span>Позиції</span>
+                                <span>Позиції замовлення</span>
                                 <input
                                     id="shipday-order-item"
                                     className="form-control"
@@ -722,18 +604,6 @@ class PosterBaseApp extends React.Component {
                                 />
                             </label>
 
-                            <label className="shipday-form__field" htmlFor="shipday-requested-time">
-                                <span>Бажаний час</span>
-                                <input
-                                    id="shipday-requested-time"
-                                    className="form-control"
-                                    name="requestedDeliveryTime"
-                                    value={shipdayDraft.requestedDeliveryTime}
-                                    onChange={this.handleShipdayDraftChange}
-                                    placeholder="2026-04-08T23:30:00+03:00"
-                                />
-                            </label>
-
                             <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
                                 <span>Інструкція курʼєру</span>
                                 <input
@@ -751,8 +621,9 @@ class PosterBaseApp extends React.Component {
                                 type="button"
                                 className="btn btn-success"
                                 onClick={this.handleShipdaySend}
+                                disabled={shipdayStatus.state === 'sending'}
                             >
-                                Відправити в Shipday
+                                {shipdayActionLabel}
                             </button>
                             <span className="shipday-form__hint">{shipdayStatus.message}</span>
                         </div>
@@ -763,15 +634,15 @@ class PosterBaseApp extends React.Component {
                     {posterMode === 'mock' && (
                         <section className="info-card info-card--highlight">
                             <div className="info-card__header">
-                                <h2>Локальний mock POS</h2>
+                                <h2>Preview mode</h2>
                                 <div className="status-chip status-chip--neutral">
                                     Без каси
                                 </div>
                             </div>
 
                             <p className="info-card__meta">
-                                Тут можна прогнати основні сценарії без Poster desktop app:
-                                симулювати клік по іконці застосунку, popup і тип пристрою.
+                                Тут можна симулювати доставку без каси. `Order Click` підставляє demo-замовлення
+                                з клієнтом, адресою та позиціями.
                             </p>
 
                             <div className="mock-controls">
@@ -817,31 +688,33 @@ class PosterBaseApp extends React.Component {
 
                             <div className="details-list">
                                 <div className="details-list__row">
-                                    <span>Зареєстровані іконки</span>
-                                    <strong>{mockRegisteredIcons || 'Немає'}</strong>
+                                    <span>Іконки</span>
+                                    <strong>{mockRegisteredIcons || activeIconLocations || 'Немає'}</strong>
                                 </div>
                                 <div className="details-list__row">
-                                    <span>Останній popup title</span>
+                                    <span>Popup title</span>
                                     <strong>{mockPopupTitle}</strong>
                                 </div>
                                 <div className="details-list__row">
-                                    <span>Popup у mock runtime</span>
+                                    <span>Runtime</span>
+                                    <strong>{activePlatforms.length ? activePlatforms.join(', ') : runtimeLabel}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Backend</span>
+                                    <strong>{healthEndpoint}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Остання перевірка</span>
+                                    <strong>{formatCheckedAt(checkedAt)}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Popup</span>
                                     <strong>{posterDebugState && posterDebugState.popupOpen ? 'Відкрито' : 'Закрито'}</strong>
                                 </div>
                             </div>
+                            {this.renderServiceDetails()}
                         </section>
                     )}
-
-                    <section className="info-card info-card--highlight">
-                        <h2>Що вже підготовлено</h2>
-                        <ul className="next-steps">
-                            <li>Реєстрація кнопки застосунку в `functions` та `order` через Poster POS API.</li>
-                            <li>Popup shell для майбутнього UI інтеграції замість демо-прикладів boilerplate.</li>
-                            <li>Адаптер для healthcheck зовнішнього сервісу і місце для подальшого API-клієнта.</li>
-                            <li>Безпечний вектор розвитку: секрети не зберігаємо в POS bundle, а виносимо в backend/proxy.</li>
-                            <li>Локальний browser preview з mock Poster runtime для тестування без каси.</li>
-                        </ul>
-                    </section>
                 </div>
             </div>
         );
