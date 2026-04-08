@@ -4,3 +4,7 @@ bundle.js.map
 .DS_Store
 .idea/
 dist/
+.env
+.env.local
+.data/
+manifest.local.json

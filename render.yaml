@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: poster-shipday-bridge
+    env: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.14.0
+      - key: BACKEND_PUBLIC_URL
+        sync: false
+      - key: POSTER_APPLICATION_ID
+        sync: false
+      - key: POSTER_APPLICATION_SECRET
+        sync: false
+      - key: SHIPDAY_API_KEY
+        sync: false
+      - key: SHIPDAY_PICKUP_NAME
+        sync: false
+      - key: SHIPDAY_PICKUP_PHONE
+        sync: false
+      - key: SHIPDAY_PICKUP_ADDRESS
+        sync: false
+      - key: SHIPDAY_PICKUP_FORMATTED_ADDRESS
+        sync: false
+      - key: SHIPDAY_PICKUP_LAT
+        sync: false
+      - key: SHIPDAY_PICKUP_LNG
+        sync: false

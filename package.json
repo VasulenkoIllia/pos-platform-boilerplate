@@ -4,9 +4,11 @@
   "description": "",
   "scripts": {
     "dev": "vite build --watch & vite --host",
+    "dev:backend": "node --watch server/index.mjs",
     "build": "vite build",
     "deploy": "node upload.mjs",
-    "lint": "eslint . --ext .js,.jsx"
+    "lint": "eslint . --ext .js,.jsx",
+    "start": "node server/index.mjs"
   },
   "repository": {
     "type": "git",
@@ -18,9 +20,15 @@
     "url": "https://github.com/joinposter/Poster-POS-Platform-Boilerplate/issues"
   },
   "homepage": "https://github.com/joinposter/Poster-POS-Platform-Boilerplate#readme",
+  "engines": {
+    "node": ">=20.14.0"
+  },
   "dependencies": {
     "@popperjs/core": "^2.11.8",
     "bootstrap": "^5.3.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
     "os-browserify": "^0.3.0",
     "poster-ui-kit": "^1.2.0",
     "process": "^0.11.10",
@@ -29,7 +37,8 @@
     "react-dom": "^16.7.0",
     "receipt": "^1.4.0",
     "sass": "^1.75.0",
-    "stream-browserify": "^3.0.0"
+    "stream-browserify": "^3.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@babel/core": "^7.24.7",
