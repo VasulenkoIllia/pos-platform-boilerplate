@@ -39,7 +39,9 @@ const config = {
     poster: {
         applicationId: String(process.env.POSTER_APPLICATION_ID || '').trim(),
         applicationSecret: String(process.env.POSTER_APPLICATION_SECRET || '').trim(),
+        apiBaseUrl: normalizeBaseUrl(process.env.POSTER_API_BASE_URL || 'https://joinposter.com/api'),
         connectPath: process.env.POSTER_CONNECT_PATH || '/poster/connect',
+        settingsPath: process.env.POSTER_SETTINGS_PATH || '/poster/settings',
         oauthStartPath: '/poster/oauth/start',
         redirectPath: process.env.POSTER_REDIRECT_PATH || '/poster/auth/callback',
         successPath: process.env.POSTER_SUCCESS_PATH || '/poster/connect/success',
@@ -48,7 +50,19 @@ const config = {
             repoRoot,
             process.env.POSTER_INSTALLATIONS_FILE || '.data/poster-installations.json',
         ),
+        accountSettingsFile: path.resolve(
+            repoRoot,
+            process.env.POSTER_ACCOUNT_SETTINGS_FILE || '.data/poster-account-settings.json',
+        ),
+        apiTimeoutMs: parseInteger(process.env.POSTER_API_TIMEOUT_MS, 15000),
         tokenExchangeTimeoutMs: parseInteger(process.env.POSTER_AUTH_TIMEOUT_MS, 15000),
+    },
+    security: {
+        settingsSecret: String(
+            process.env.SETTINGS_ENCRYPTION_SECRET
+            || process.env.POSTER_APPLICATION_SECRET
+            || 'poster-shipday-bridge-dev-secret',
+        ).trim(),
     },
     shipday: {
         apiBaseUrl: normalizeBaseUrl(process.env.SHIPDAY_API_BASE_URL || 'https://api.shipday.com'),
@@ -81,6 +95,7 @@ if (config.shipday.mockMode) {
 
 config.urls = {
     connect: toUrl(config.backendPublicUrl, config.poster.connectPath),
+    settings: toUrl(config.backendPublicUrl, config.poster.settingsPath),
     oauthStart: toUrl(config.backendPublicUrl, config.poster.oauthStartPath),
     oauthCallback: toUrl(config.backendPublicUrl, config.poster.redirectPath),
     connectSuccess: toUrl(config.backendPublicUrl, config.poster.successPath),

@@ -40,6 +40,24 @@ export const getPoster = () => {
     return window.Poster || null;
 };
 
+const extractPosterAccountFromUrl = (value) => {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        const { hostname } = new URL(value);
+
+        if (!hostname.endsWith('.joinposter.com')) {
+            return '';
+        }
+
+        return hostname.replace(/\.joinposter\.com$/, '').split('.')[0] || '';
+    } catch (error) {
+        return '';
+    }
+};
+
 export const getPosterMode = () => {
     const poster = getPoster();
 
@@ -113,6 +131,46 @@ export const openPosterPopup = (popupOptions) => {
     return true;
 };
 
+export const showPosterNotification = async (notification) => {
+    const poster = getPoster();
+
+    if (!poster || !poster.interface || !poster.interface.showNotification) {
+        return null;
+    }
+
+    return poster.interface.showNotification(notification);
+};
+
+export const getPosterAccountHint = () => {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    const candidates = [
+        window.location && window.location.href,
+        document.referrer,
+    ];
+    const ancestorOrigins = document.location && document.location.ancestorOrigins
+        ? Array.from(document.location.ancestorOrigins)
+        : [];
+
+    candidates.push(...ancestorOrigins);
+
+    for (const candidate of candidates) {
+        const account = extractPosterAccountFromUrl(candidate);
+
+        if (account) {
+            return account;
+        }
+    }
+
+    const poster = getPoster();
+
+    return poster && poster.mockRuntime && poster.mockAccount
+        ? poster.mockAccount
+        : '';
+};
+
 export const subscribeToPosterEvent = (eventName, handler) => {
     const poster = getPoster();
 
@@ -122,6 +180,36 @@ export const subscribeToPosterEvent = (eventName, handler) => {
 
     poster.on(eventName, handler);
     return true;
+};
+
+export const getPosterActiveOrder = async () => {
+    const poster = getPoster();
+
+    if (!poster || !poster.orders || !poster.orders.getActive) {
+        return null;
+    }
+
+    return poster.orders.getActive();
+};
+
+export const getPosterClient = async (clientId) => {
+    const poster = getPoster();
+
+    if (!poster || !poster.clients || !poster.clients.get || !clientId) {
+        return null;
+    }
+
+    return poster.clients.get(clientId);
+};
+
+export const getPosterProductFullName = async (params) => {
+    const poster = getPoster();
+
+    if (!poster || !poster.products || !poster.products.getFullName || !params || !params.id) {
+        return null;
+    }
+
+    return poster.products.getFullName(params);
 };
 
 export const simulatePosterIconClick = (place) => {

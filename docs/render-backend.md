@@ -8,7 +8,9 @@
 - `GET /poster/connect` для сторінки підключення в Poster.
 - `GET /poster/oauth/start` для старту Poster OAuth.
 - `GET /poster/auth/callback` для завершення OAuth і збереження токена Poster.
+- `GET /poster/settings` для account-level налаштувань Shipday і mapping точок.
 - `GET /api/poster/installations` для перевірки збережених інсталяцій.
+- `GET /api/poster/settings/:account` для перевірки збережених account settings.
 - `POST /api/shipday/orders` для відправки delivery order у Shipday.
 - `GET /api/shipday/orders/:orderNumber` для діагностики.
 - `POST /webhooks/shipday` як заготовка під майбутні вебхуки.
@@ -37,8 +39,9 @@ npm run dev:backend
 - `BACKEND_PUBLIC_URL`
 - `POSTER_APPLICATION_ID`
 - `POSTER_APPLICATION_SECRET`
+- `SETTINGS_ENCRYPTION_SECRET`
 
-`SHIPDAY_API_KEY` потрібен тільки для реальної відправки в Shipday. Для першого тесту можна лишити mock mode.
+`SHIPDAY_API_KEY` тепер не обовʼязковий як глобальний env. Основний сценарій: кожен клієнт зберігає свій Shipday API key на сторінці `/poster/settings` після OAuth.
 
 ## Mock режим для Shipday
 
@@ -51,6 +54,19 @@ npm run dev:backend
 - не дзвонить у Shipday API
 - повертає тестову успішну відповідь
 - дозволяє перевірити UI та повний flow прямо в касі Poster
+- працює навіть без глобального `SHIPDAY_API_KEY`
+
+## Як тепер працює універсальна конфігурація
+
+1. Poster веде користувача на `connect` сторінку.
+2. Backend робить Poster OAuth і зберігає access token акаунта.
+3. Backend синхронізує `spots.getSpots`.
+4. Користувач відкриває `/poster/settings?account=...`.
+5. Там він:
+   - вводить свій `Shipday API key`
+   - вибирає default spot
+   - за потреби додає override pickup fields для кожної точки
+6. Після цього POS-кнопка `Shipday` працює в one-click режимі без ручного введення pickup адреси в касі.
 
 ## Що вписати в Poster Developer
 
@@ -79,16 +95,18 @@ npm run deploy
 
 `POST /api/shipday/orders`
 
-Можна передати або чистий Shipday payload, або обʼєкт виду:
+Тепер краще передавати обʼєкт виду:
 
 ```json
 {
+  "account": "mamamia-pizza",
+  "poster": {
+    "orderId": "12345",
+    "spotId": "2",
+    "serviceMode": "delivery"
+  },
   "payload": {
     "orderNumber": "12345",
-    "pickup": {
-      "name": "Mamamia Pizza",
-      "address": "вул. Прикладна 10"
-    },
     "delivery": {
       "name": "Ім'я клієнта",
       "address": "вул. Прикладна 1"
@@ -97,15 +115,13 @@ npm run deploy
 }
 ```
 
-Якщо `pickup` не передати, backend спробує добудувати його з env:
+`pickup` можна не передавати. Backend резолвить його сам:
 
-- `SHIPDAY_PICKUP_NAME`
-- `SHIPDAY_PICKUP_PHONE`
-- `SHIPDAY_PICKUP_ADDRESS`
-- `SHIPDAY_PICKUP_FORMATTED_ADDRESS`
-- `SHIPDAY_PICKUP_LAT`
-- `SHIPDAY_PICKUP_LNG`
+1. з mapping для `poster.spotId`
+2. або з `defaultSpotId`
+3. або з єдиної synced точки
+4. або з глобального env fallback, якщо він налаштований
 
 ## Поточне обмеження
 
-Poster OAuth інсталяції зараз зберігаються у JSON-файл `.data/poster-installations.json`. Для першого етапу тестування цього достатньо, але для стабільного продакшену краще винести це в базу даних.
+Poster OAuth інсталяції та account settings зараз зберігаються у JSON-файли в `.data/`. Для першого етапу тестування цього достатньо, але для стабільного продакшену краще винести це в базу даних.

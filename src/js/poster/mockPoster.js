@@ -5,30 +5,46 @@ const DEFAULT_ENVIRONMENT = {
     desktop: true,
 };
 
+const buildMockClient = () => ({
+    id: 77,
+    firstname: 'Local',
+    lastname: 'Preview Client',
+    name: 'Local Preview Client',
+    phone: '+380671112233',
+    address: 'вул. Саксаганського, 15, Київ',
+});
+
 const buildMockOrder = () => ({
     id: 'DEV-1001',
     orderId: 'DEV-1001',
     totalSum: 42500,
+    total: 425,
+    spotId: '1',
+    clientId: 77,
     guestsCount: 2,
     tableName: 'Preview Table',
     spotName: 'Main Hall',
-    client: {
-        id: 77,
-        phone: '+380671112233',
-        name: 'Local Preview Client',
-    },
+    client: buildMockClient(),
     comment: 'Домофон 18, подзвонити за 5 хвилин.',
+    deliveryInfo: {
+        city: 'Київ',
+        address1: 'вул. Саксаганського, 15',
+        address2: '',
+        comment: 'Домофон 18, подзвонити за 5 хвилин.',
+    },
     address: {
         address1: 'вул. Саксаганського, 15',
         city: 'Київ',
     },
     products: [
         {
+            id: 101,
             product_name: 'Pizza Pepperoni',
             count: 2,
             price: 18000,
         },
         {
+            id: 202,
             product_name: 'Cola 0.5',
             count: 1,
             price: 6500,
@@ -73,10 +89,13 @@ const installPosterMock = () => {
         registeredIcons: {},
         popupOpen: false,
         lastPopup: null,
+        lastNotification: null,
+        activeOrder: null,
     };
 
     const poster = {
         mockRuntime: true,
+        mockAccount: 'preview-account',
         interface: {
             showApplicationIconAt(places) {
                 mockState.registeredIcons = cloneValue(places || {});
@@ -87,10 +106,53 @@ const installPosterMock = () => {
                 mockState.lastPopup = cloneValue(options || {});
                 return true;
             },
+
+            showNotification(options) {
+                mockState.lastNotification = cloneValue(options || {});
+                return Promise.resolve(mockState.lastNotification);
+            },
         },
 
         on(eventName, handler) {
             eventBus.on(eventName, handler);
+        },
+
+        orders: {
+            getActive() {
+                return Promise.resolve(
+                    mockState.activeOrder
+                        ? { order: cloneValue(mockState.activeOrder) }
+                        : {},
+                );
+            },
+        },
+
+        clients: {
+            get(clientId) {
+                const activeClient = mockState.activeOrder && mockState.activeOrder.client;
+
+                if (!activeClient || Number(activeClient.id) !== Number(clientId)) {
+                    return Promise.resolve(false);
+                }
+
+                return Promise.resolve(cloneValue(activeClient));
+            },
+        },
+
+        products: {
+            getFullName({ id }) {
+                const activeProducts = mockState.activeOrder
+                    ? Object.values(mockState.activeOrder.products || {})
+                    : [];
+                const product = activeProducts.find(item => Number(item.id) === Number(id));
+
+                return Promise.resolve({
+                    id,
+                    modification: product && product.modification ? product.modification : 0,
+                    name: product && product.product_name ? product.product_name : `Product #${id}`,
+                    modGroupName: '',
+                });
+            },
         },
 
         emit(eventName, payload) {
@@ -103,6 +165,7 @@ const installPosterMock = () => {
                 registeredIcons: cloneValue(mockState.registeredIcons),
                 popupOpen: mockState.popupOpen,
                 lastPopup: cloneValue(mockState.lastPopup),
+                lastNotification: cloneValue(mockState.lastNotification),
             };
         },
 
@@ -120,7 +183,8 @@ const installPosterMock = () => {
             };
 
             if (place === 'order') {
-                payload.order = buildMockOrder();
+                mockState.activeOrder = buildMockOrder();
+                payload.order = cloneValue(mockState.activeOrder);
             }
 
             eventBus.emit('applicationIconClicked', payload);

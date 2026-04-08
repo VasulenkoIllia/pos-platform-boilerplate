@@ -7,6 +7,54 @@ const escapeHtml = value => String(value || '')
 
 const renderList = items => items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
 
+const renderTextInput = ({
+    name,
+    label,
+    value,
+    placeholder = '',
+    helper = '',
+    type = 'text',
+}) => `
+    <label class="field">
+        <span>${escapeHtml(label)}</span>
+        <input type="${escapeHtml(type)}" name="${escapeHtml(name)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">
+        ${helper ? `<small>${escapeHtml(helper)}</small>` : ''}
+    </label>
+`;
+
+const renderSelect = ({
+    name,
+    label,
+    value,
+    options,
+    helper = '',
+}) => `
+    <label class="field">
+        <span>${escapeHtml(label)}</span>
+        <select name="${escapeHtml(name)}">
+            ${options.map(option => `
+                <option value="${escapeHtml(option.value)}" ${String(option.value) === String(value) ? 'selected' : ''}>
+                    ${escapeHtml(option.label)}
+                </option>
+            `).join('')}
+        </select>
+        ${helper ? `<small>${escapeHtml(helper)}</small>` : ''}
+    </label>
+`;
+
+const renderCheckbox = ({
+    name,
+    label,
+    checked,
+    helper = '',
+}) => `
+    <label class="checkbox">
+        <input type="checkbox" name="${escapeHtml(name)}" value="1" ${checked ? 'checked' : ''}>
+        <span>${escapeHtml(label)}</span>
+    </label>
+    ${helper ? `<small class="checkbox-helper">${escapeHtml(helper)}</small>` : ''}
+`;
+
 const renderLayout = ({
     title,
     eyebrow,
@@ -25,7 +73,7 @@ const renderLayout = ({
         :root {
             color-scheme: light;
             --bg: #f4efe4;
-            --panel: rgba(255, 255, 255, 0.9);
+            --panel: rgba(255, 255, 255, 0.92);
             --text: #1d241f;
             --muted: #5d655f;
             --line: rgba(29, 36, 31, 0.12);
@@ -51,7 +99,7 @@ const renderLayout = ({
             padding: 24px;
         }
         .card {
-            width: min(760px, 100%);
+            width: min(1120px, 100%);
             background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 24px;
@@ -76,16 +124,24 @@ const renderLayout = ({
             letter-spacing: 0.04em;
             text-transform: uppercase;
         }
-        h1 {
+        h1, h2, h3 {
             margin: 0;
-            font-size: clamp(28px, 5vw, 42px);
-            line-height: 1.05;
+            line-height: 1.08;
         }
-        p, li {
+        h1 {
+            font-size: clamp(28px, 5vw, 42px);
+        }
+        h2 {
+            font-size: 24px;
+        }
+        h3 {
+            font-size: 18px;
+        }
+        p, li, label, small {
             margin: 0;
             line-height: 1.65;
             color: var(--muted);
-            font-size: 16px;
+            font-size: 15px;
         }
         ul {
             margin: 0;
@@ -109,6 +165,12 @@ const renderLayout = ({
             color: #fff;
             text-decoration: none;
             font-weight: 700;
+            border: 0;
+            cursor: pointer;
+        }
+        .button--ghost {
+            background: rgba(29, 36, 31, 0.08);
+            color: var(--text);
         }
         .panel {
             padding: 18px 20px;
@@ -118,6 +180,59 @@ const renderLayout = ({
         }
         .panel strong {
             color: var(--text);
+        }
+        .panel-grid {
+            display: grid;
+            gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+        .grid {
+            display: grid;
+            gap: 16px;
+        }
+        .form-grid {
+            display: grid;
+            gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        }
+        .field {
+            display: grid;
+            gap: 8px;
+        }
+        .field span {
+            color: var(--text);
+            font-weight: 600;
+        }
+        .field input,
+        .field select,
+        .field textarea {
+            width: 100%;
+            min-height: 44px;
+            border-radius: 12px;
+            border: 1px solid rgba(29, 36, 31, 0.18);
+            padding: 10px 12px;
+            font: inherit;
+            background: #fff;
+            color: var(--text);
+        }
+        .field textarea {
+            min-height: 96px;
+            resize: vertical;
+        }
+        .checkbox {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .checkbox input {
+            width: 18px;
+            height: 18px;
+        }
+        .checkbox-helper {
+            display: block;
+            margin-top: 4px;
         }
         .mono {
             font-family: "SFMono-Regular", "Menlo", monospace;
@@ -130,6 +245,59 @@ const renderLayout = ({
         }
         .tone-danger {
             color: var(--danger);
+        }
+        .tone-success {
+            color: var(--accent);
+        }
+        .spot-list {
+            display: grid;
+            gap: 16px;
+        }
+        .spot-card {
+            padding: 20px;
+            border-radius: 18px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.72);
+            display: grid;
+            gap: 14px;
+        }
+        .spot-card__meta {
+            display: grid;
+            gap: 6px;
+        }
+        .spot-card__meta strong {
+            color: var(--text);
+        }
+        .badge {
+            display: inline-flex;
+            width: fit-content;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(29, 36, 31, 0.08);
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .notice {
+            padding: 14px 16px;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.66);
+        }
+        .notice--success {
+            border-color: rgba(31, 122, 75, 0.25);
+            background: rgba(31, 122, 75, 0.08);
+        }
+        .notice--danger {
+            border-color: rgba(159, 47, 47, 0.25);
+            background: rgba(159, 47, 47, 0.08);
+        }
+        @media (max-width: 720px) {
+            .card__body {
+                padding: 24px;
+            }
         }
     </style>
     ${autoRedirectUrl ? `<meta http-equiv="refresh" content="${Math.max(1, Math.ceil(autoRedirectDelayMs / 1000))};url=${escapeHtml(autoRedirectUrl)}">` : ''}
@@ -163,7 +331,7 @@ export const renderConnectPage = ({
         <div class="actions">
             <a class="button" href="${escapeHtml(oauthStartUrl)}">Продовжити підключення</a>
         </div>
-        <p class="helper">Якщо автоматичний редірект не спрацює, натисніть кнопку вище.</p>
+        <p class="helper">Після OAuth відкриється сторінка налаштувань Shipday для цього акаунта.</p>
     `,
     aside: `
         <div class="panel">
@@ -175,22 +343,203 @@ export const renderConnectPage = ({
     `,
 });
 
+export const renderSettingsPage = ({
+    appName,
+    account,
+    settings,
+    installation,
+    settingsActionUrl,
+    syncSpotsUrl,
+    notices = [],
+}) => {
+    const publicSettings = settings || null;
+    const posterSpots = publicSettings && Array.isArray(publicSettings.posterSpots)
+        ? publicSettings.posterSpots
+        : [];
+    const defaultSpotOptions = [
+        {
+            value: '',
+            label: posterSpots.length ? 'Оберіть точку за замовчуванням' : 'Спочатку синхронізуйте точки',
+        },
+        ...posterSpots.map(spot => ({
+            value: spot.spotId,
+            label: `${spot.name || `Spot #${spot.spotId}`} (${spot.spotId})`,
+        })),
+    ];
+    const shipday = publicSettings && publicSettings.shipday ? publicSettings.shipday : {
+        apiKeyConfigured: false,
+        apiKeyMasked: '',
+        authMode: 'x-api-key',
+        mockMode: true,
+    };
+    const noticeMarkup = notices.map(notice => `
+        <div class="notice notice--${escapeHtml(notice.kind || 'success')}">
+            ${escapeHtml(notice.message)}
+        </div>
+    `).join('');
+    const spotCards = posterSpots.length
+        ? posterSpots.map((spot) => {
+            const override = publicSettings && publicSettings.pickupMappings
+                ? publicSettings.pickupMappings[spot.spotId] || {}
+                : {};
+
+            return `
+                <section class="spot-card">
+                    <div class="spot-card__meta">
+                        <div class="badge">Poster spot ${escapeHtml(spot.spotId)}</div>
+                        <strong>${escapeHtml(spot.name || `Spot #${spot.spotId}`)}</strong>
+                        <div>${escapeHtml(spot.address || 'Адреса не повернулась із Poster API')}</div>
+                    </div>
+                    <div class="form-grid">
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][name]`,
+                            label: 'Shipday pickup name',
+                            value: override.name || '',
+                            placeholder: spot.name || 'Назва pickup',
+                            helper: 'Якщо лишити порожнім, backend візьме назву точки з Poster.',
+                        })}
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][phone]`,
+                            label: 'Pickup phone',
+                            value: override.phone || '',
+                            placeholder: spot.phone || '+380...',
+                        })}
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][address]`,
+                            label: 'Pickup address',
+                            value: override.address || '',
+                            placeholder: spot.address || 'Адреса точки',
+                            helper: 'Якщо лишити порожнім, backend візьме адресу точки з Poster.',
+                        })}
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][formattedAddress]`,
+                            label: 'Formatted address',
+                            value: override.formattedAddress || '',
+                            placeholder: override.address || spot.address || '',
+                        })}
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][lat]`,
+                            label: 'Latitude',
+                            value: override.lat || '',
+                            placeholder: '50.4501',
+                        })}
+                        ${renderTextInput({
+                            name: `pickupMappings[${spot.spotId}][lng]`,
+                            label: 'Longitude',
+                            value: override.lng || '',
+                            placeholder: '30.5234',
+                        })}
+                    </div>
+                </section>
+            `;
+        }).join('')
+        : `
+            <div class="panel">
+                <p>Ще немає синхронізованих торгових точок. Натисни <strong>Синхронізувати точки Poster</strong> і перевір, що акаунт уже пройшов OAuth.</p>
+            </div>
+        `;
+
+    return renderLayout({
+        title: `${appName} | Shipday settings`,
+        eyebrow: 'Shipday settings',
+        heading: `Налаштування акаунта ${account}`,
+        body: `
+            ${noticeMarkup}
+            <div class="panel-grid">
+                <div class="panel">
+                    <p><strong>Poster account</strong></p>
+                    <p class="mono">${escapeHtml(account)}</p>
+                </div>
+                <div class="panel">
+                    <p><strong>Poster token</strong></p>
+                    <p class="mono">${escapeHtml(installation && installation.accessToken ? installation.accessToken : 'Немає')}</p>
+                </div>
+                <div class="panel">
+                    <p><strong>Shipday API key</strong></p>
+                    <p class="mono">${shipday.apiKeyConfigured ? escapeHtml(shipday.apiKeyMasked || 'Збережено') : 'Ще не збережено'}</p>
+                </div>
+                <div class="panel">
+                    <p><strong>Poster spots</strong></p>
+                    <p class="mono">${posterSpots.length ? String(posterSpots.length) : '0'}</p>
+                </div>
+            </div>
+            <form class="grid" method="post" action="${escapeHtml(settingsActionUrl)}">
+                <input type="hidden" name="account" value="${escapeHtml(account)}">
+                <section class="panel grid">
+                    <h2>Shipday доступ</h2>
+                    <div class="form-grid">
+                        ${renderTextInput({
+                            name: 'shipday[apiKey]',
+                            label: 'Shipday API key',
+                            value: '',
+                            type: 'password',
+                            placeholder: shipday.apiKeyConfigured ? 'Лиш порожнім, щоб не змінювати збережений ключ' : 'Встав API key',
+                            helper: shipday.apiKeyConfigured
+                                ? 'Порожнє поле збереже поточний ключ.'
+                                : 'Ключ зберігається на backend для цього Poster акаунта.',
+                        })}
+                        ${renderSelect({
+                            name: 'shipday[authMode]',
+                            label: 'Auth mode',
+                            value: shipday.authMode || 'x-api-key',
+                            options: [
+                                { value: 'x-api-key', label: 'x-api-key' },
+                                { value: 'basic', label: 'Basic' },
+                            ],
+                        })}
+                    </div>
+                    <div>
+                        ${renderCheckbox({
+                            name: 'shipday[mockMode]',
+                            label: 'Залишити mock mode',
+                            checked: shipday.mockMode,
+                            helper: 'У mock mode замовлення не йдуть у реальний Shipday API. Це зручно для першого тесту.',
+                        })}
+                    </div>
+                </section>
+
+                <section class="panel grid">
+                    <div class="actions">
+                        <h2>Точки Poster і pickup mapping</h2>
+                    </div>
+                    <p>Backend підтягне точки з Poster OAuth і використовуватиме їх як pickup-джерело. Якщо в замовленні не вдасться визначити точку автоматично, спрацює точка за замовчуванням.</p>
+                    <div class="form-grid">
+                        ${renderSelect({
+                            name: 'defaultSpotId',
+                            label: 'Точка за замовчуванням',
+                            value: publicSettings && publicSettings.defaultSpotId ? publicSettings.defaultSpotId : '',
+                            options: defaultSpotOptions,
+                            helper: 'Потрібно як fallback, якщо POS payload не віддасть spotId.',
+                        })}
+                    </div>
+                    <div class="actions">
+                        <a class="button button--ghost" href="${escapeHtml(syncSpotsUrl)}">Синхронізувати точки Poster</a>
+                    </div>
+                    <div class="spot-list">
+                        ${spotCards}
+                    </div>
+                </section>
+
+                <div class="actions">
+                    <button class="button" type="submit">Зберегти налаштування</button>
+                </div>
+            </form>
+        `,
+    });
+};
+
 export const renderSuccessPage = ({
     appName,
     account,
+    settingsUrl,
 }) => renderLayout({
     title: `${appName} | Poster connected`,
     eyebrow: 'Підключено',
     heading: 'Poster OAuth завершено',
     body: `
-        <p>Акаунт <strong>${escapeHtml(account)}</strong> успішно збережено в backend. Тепер можна повернутися в Poster і продовжити налаштування Shipday.</p>
-        <div class="panel">
-            <p>Наступні кроки:</p>
-            <ul>
-                <li>Вказати цей Render URL у налаштуваннях застосунку Poster.</li>
-                <li>Заповнити Shipday API key та pickup-адресу в env Render.</li>
-                <li>Перезібрати POS bundle з правильним backend URL і повторно завантажити його в Poster.</li>
-            </ul>
+        <p>Акаунт <strong>${escapeHtml(account)}</strong> успішно збережено в backend. Тепер треба зберегти Shipday API key і змепити точки Poster на pickup-адреси.</p>
+        <div class="actions">
+            <a class="button" href="${escapeHtml(settingsUrl)}">Відкрити налаштування</a>
         </div>
     `,
 });

@@ -2,14 +2,19 @@ import React from 'react';
 import APP_CONFIG from '../config';
 import {
     closePosterMockPopup,
+    getPosterActiveOrder,
+    getPosterAccountHint,
+    getPosterClient,
     getPosterDebugState,
     getPosterEnvironment,
     getPosterMode,
+    getPosterProductFullName,
     getRuntimeLabel,
     isPosterAvailable,
     openPosterPopup,
     registerPosterIcon,
     setPosterMockEnvironment,
+    showPosterNotification,
     simulatePosterIconClick,
     subscribeToPosterEvent,
 } from '../poster/bridge';
@@ -30,7 +35,7 @@ const INITIAL_SERVICE_STATUS = {
 const INITIAL_SHIPDAY_STATUS = {
     state: 'idle',
     label: 'Не відправляли',
-    message: 'Підготуй дані замовлення і натисни кнопку відправки.',
+    message: '',
     details: null,
 };
 
@@ -59,6 +64,59 @@ const getOrderId = (order) => {
     }
 
     return order.id || order.orderId || null;
+};
+
+const buildClientName = (client) => {
+    if (!client) {
+        return '';
+    }
+
+    if (client.name) {
+        return client.name;
+    }
+
+    return [client.firstname, client.lastname].filter(Boolean).join(' ').trim();
+};
+
+const getPosterSpotId = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        order.spotId
+        || order.spot_id
+        || (order.spot && (order.spot.spotId || order.spot.spot_id || order.spot.id))
+        || '',
+    ).trim();
+};
+
+const getPosterSpotName = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        order.spotName
+        || order.spot_name
+        || (order.spot && (order.spot.name || order.spot.spot_name))
+        || order.tableName
+        || '',
+    ).trim();
+};
+
+const getOrderProducts = (order) => {
+    const products = order && (order.products || order.items || []);
+
+    if (Array.isArray(products)) {
+        return products;
+    }
+
+    if (products && typeof products === 'object') {
+        return Object.values(products);
+    }
+
+    return [];
 };
 
 const formatCheckedAt = (checkedAt) => {
@@ -104,6 +162,14 @@ const findAddressString = (order) => {
         return '';
     }
 
+    if (order.deliveryInfo && typeof order.deliveryInfo === 'object') {
+        return [
+            order.deliveryInfo.city,
+            order.deliveryInfo.address1,
+            order.deliveryInfo.address2,
+        ].filter(Boolean).join(', ');
+    }
+
     if (typeof order.delivery_address === 'string') {
         return order.delivery_address;
     }
@@ -120,11 +186,15 @@ const findAddressString = (order) => {
         ].filter(Boolean).join(', ');
     }
 
+    if (order.client && typeof order.client.address === 'string') {
+        return order.client.address;
+    }
+
     return '';
 };
 
 const findProductsSummary = (order) => {
-    const products = order && (order.products || order.items || []);
+    const products = getOrderProducts(order);
 
     if (!Array.isArray(products) || !products.length) {
         return '';
@@ -132,7 +202,7 @@ const findProductsSummary = (order) => {
 
     return products.map((item) => {
         const name = item.product_name || item.name || 'Товар';
-        const quantity = item.count || item.quantity || 1;
+        const quantity = item.count || item.quantity || item.num || 1;
 
         return `${name} x${quantity}`;
     }).join(', ');
@@ -144,10 +214,17 @@ const buildShipdayDraft = (order) => {
 
     return {
         orderNumber: String(draftOrderNumber),
-        customerName: client.name || '',
+        customerName: buildClientName(client),
         customerPhone: client.phone || '',
         deliveryAddress: findAddressString(order),
-        deliveryInstruction: (order && (order.comment || order.deliveryComment)) || '',
+        deliveryInstruction: (
+            order
+            && (
+                order.deliveryComment
+                || (order.deliveryInfo && order.deliveryInfo.comment)
+                || order.comment
+            )
+        ) || '',
         orderItem: findProductsSummary(order),
         orderTotal: normalizeMoneyValue(order && (order.totalSum || order.total || order.sum)),
     };
@@ -178,6 +255,83 @@ const buildShipdayPayload = (draft) => {
     }
 
     return payload;
+};
+
+const buildShipdayRequest = ({
+    draft,
+    order,
+    account,
+}) => {
+    const posterContext = {
+        orderId: getOrderId(order) || String(draft.orderNumber || '').trim(),
+        serviceMode: order && order.serviceMode ? order.serviceMode : '',
+        spotId: getPosterSpotId(order),
+        spotName: getPosterSpotName(order),
+    };
+
+    return {
+        account: account || undefined,
+        poster: Object.entries(posterContext).reduce((accumulator, [key, value]) => {
+            if (value) {
+                accumulator[key] = value;
+            }
+
+            return accumulator;
+        }, {}),
+        payload: buildShipdayPayload(draft),
+    };
+};
+
+const getMissingShipdayFields = (draft) => {
+    const missingFields = [];
+
+    if (!String(draft.orderNumber || '').trim()) {
+        missingFields.push('order number');
+    }
+
+    if (!String(draft.customerName || '').trim()) {
+        missingFields.push('імʼя клієнта');
+    }
+
+    if (!String(draft.deliveryAddress || '').trim()) {
+        missingFields.push('адреса доставки');
+    }
+
+    return missingFields;
+};
+
+const buildMissingFieldsStatus = missingFields => ({
+    state: 'error',
+    label: 'Заповни поля',
+    message: `Заповни: ${missingFields.join(', ')}.`,
+    details: {
+        missingFields,
+    },
+});
+
+const buildShipdaySuccessStatus = result => ({
+    state: 'success',
+    label: result.mode === 'mock' ? 'Mock success' : 'Відправлено',
+    message: result.mode === 'mock'
+        ? 'Тестову відправку виконано.'
+        : 'Замовлення прийнято.',
+    details: result,
+});
+
+const buildShipdayErrorStatus = (error) => {
+    const responseIssues = error.response && Array.isArray(error.response.issues)
+        ? error.response.issues
+        : [];
+    const firstIssue = responseIssues.length
+        ? responseIssues[0].message
+        : null;
+
+    return {
+        state: 'error',
+        label: 'Помилка',
+        message: firstIssue || error.message || 'Не вдалося відправити замовлення.',
+        details: error.response || null,
+    };
 };
 
 class PosterBaseApp extends React.Component {
@@ -211,7 +365,11 @@ class PosterBaseApp extends React.Component {
         this.refreshStatus = this.refreshStatus.bind(this);
         this.handleShipdayDraftChange = this.handleShipdayDraftChange.bind(this);
         this.handleShipdaySend = this.handleShipdaySend.bind(this);
+        this.hydrateActiveOrder = this.hydrateActiveOrder.bind(this);
+        this.openShipdayPopup = this.openShipdayPopup.bind(this);
+        this.sendShipdayDraft = this.sendShipdayDraft.bind(this);
         this.syncPosterContext = this.syncPosterContext.bind(this);
+        this.lastHydrationRequestId = 0;
     }
 
     componentDidMount() {
@@ -231,19 +389,48 @@ class PosterBaseApp extends React.Component {
         this.isMountedFlag = false;
     }
 
-    handleApplicationIconClicked(data) {
-        openPosterPopup(APP_CONFIG.popup);
+    async handleApplicationIconClicked(data) {
         const order = data && data.order ? data.order : null;
+        const place = data && data.place ? data.place : 'unknown';
+        const orderId = getOrderId(order);
 
         this.setState({
             lastLaunchContext: {
-                orderId: getOrderId(order),
-                place: data && data.place ? data.place : 'unknown',
+                orderId,
+                place,
             },
             lastOrderSnapshot: order,
-            popupOpen: true,
+            popupOpen: false,
             shipdayDraft: buildShipdayDraft(order),
             shipdayStatus: INITIAL_SHIPDAY_STATUS,
+        });
+
+        const hydratedOrder = await this.hydrateActiveOrder(order);
+        const effectiveOrder = hydratedOrder || order;
+        const shipdayDraft = buildShipdayDraft(effectiveOrder);
+        const shouldAutoSend = getPosterMode() === 'real' && place === 'order';
+
+        if (!shouldAutoSend) {
+            this.openShipdayPopup({
+                shipdayDraft,
+                shipdayStatus: INITIAL_SHIPDAY_STATUS,
+            });
+            return;
+        }
+
+        const missingFields = getMissingShipdayFields(shipdayDraft);
+
+        if (missingFields.length) {
+            this.openShipdayPopup({
+                shipdayDraft,
+                shipdayStatus: buildMissingFieldsStatus(missingFields),
+            });
+            return;
+        }
+
+        await this.sendShipdayDraft(shipdayDraft, {
+            notify: true,
+            openPopupOnError: true,
         });
     }
 
@@ -303,75 +490,195 @@ class PosterBaseApp extends React.Component {
         }));
     }
 
-    async handleShipdaySend() {
-        const { shipdayDraft } = this.state;
-        const missingFields = [];
+    async hydrateActiveOrder(fallbackOrder = null) {
+        const requestId = Date.now();
+        this.lastHydrationRequestId = requestId;
 
-        if (!String(shipdayDraft.orderNumber || '').trim()) {
-            missingFields.push('order number');
-        }
+        try {
+            const activeOrderResponse = await getPosterActiveOrder();
+            const activeOrder = activeOrderResponse && activeOrderResponse.order
+                ? activeOrderResponse.order
+                : null;
+            const sourceOrder = activeOrder || fallbackOrder;
 
-        if (!String(shipdayDraft.customerName || '').trim()) {
-            missingFields.push('імʼя клієнта');
-        }
+            if (!sourceOrder) {
+                return null;
+            }
 
-        if (!String(shipdayDraft.deliveryAddress || '').trim()) {
-            missingFields.push('адреса доставки');
-        }
+            const clientId = sourceOrder.clientId
+                || (sourceOrder.client && sourceOrder.client.id)
+                || (fallbackOrder && fallbackOrder.client && fallbackOrder.client.id)
+                || 0;
 
-        if (missingFields.length) {
-            this.setState({
-                shipdayStatus: {
-                    state: 'error',
-                    label: 'Заповни поля',
-                    message: `Для тесту заповни: ${missingFields.join(', ')}.`,
-                    details: {
-                        missingFields,
-                    },
+            const [client, products] = await Promise.all([
+                clientId ? getPosterClient(clientId).catch(() => null) : Promise.resolve(null),
+                Promise.all(getOrderProducts(sourceOrder).map(async (item) => {
+                    if (item.product_name || item.name || !item.id) {
+                        return item;
+                    }
+
+                    try {
+                        const fullName = await getPosterProductFullName({
+                            id: item.id,
+                            modification: item.modification,
+                        });
+
+                        return {
+                            ...item,
+                            name: fullName && fullName.name ? fullName.name : `Товар #${item.id}`,
+                            product_name: fullName && fullName.name ? fullName.name : `Товар #${item.id}`,
+                        };
+                    } catch (error) {
+                        return {
+                            ...item,
+                            name: `Товар #${item.id}`,
+                            product_name: `Товар #${item.id}`,
+                        };
+                    }
+                })),
+            ]);
+
+            const normalizedOrder = {
+                ...(fallbackOrder || {}),
+                ...sourceOrder,
+                id: getOrderId(sourceOrder) || getOrderId(fallbackOrder),
+                orderId: getOrderId(sourceOrder) || getOrderId(fallbackOrder),
+                client: client
+                    ? {
+                        ...client,
+                        name: buildClientName(client),
+                        phone: client.phone || '',
+                    }
+                    : (fallbackOrder && fallbackOrder.client) || null,
+                products,
+                total: sourceOrder.total ?? (fallbackOrder && fallbackOrder.total),
+                totalSum: sourceOrder.totalSum
+                    ?? (fallbackOrder && fallbackOrder.totalSum)
+                    ?? sourceOrder.total
+                    ?? (fallbackOrder && fallbackOrder.total),
+                sum: sourceOrder.sum
+                    ?? (fallbackOrder && fallbackOrder.sum)
+                    ?? sourceOrder.total
+                    ?? (fallbackOrder && fallbackOrder.total),
+                deliveryComment: sourceOrder.deliveryComment
+                    || (sourceOrder.deliveryInfo && sourceOrder.deliveryInfo.comment)
+                    || (fallbackOrder && fallbackOrder.deliveryComment)
+                    || '',
+            };
+
+            if (!this.isMountedFlag || this.lastHydrationRequestId !== requestId) {
+                return normalizedOrder;
+            }
+
+            this.setState(prevState => ({
+                lastLaunchContext: {
+                    ...(prevState.lastLaunchContext || {}),
+                    orderId: getOrderId(normalizedOrder),
                 },
-            });
-            return;
+                lastOrderSnapshot: normalizedOrder,
+                shipdayDraft: buildShipdayDraft(normalizedOrder),
+            }));
+
+            return normalizedOrder;
+        } catch (error) {
+            // Keep the initial payload if the full order is unavailable in the current POS context.
+            return fallbackOrder;
         }
+    }
+
+    openShipdayPopup({
+        shipdayDraft,
+        shipdayStatus = INITIAL_SHIPDAY_STATUS,
+    }) {
+        openPosterPopup(APP_CONFIG.popup);
 
         this.setState({
+            popupOpen: true,
+            shipdayDraft,
+            shipdayStatus,
+        });
+    }
+
+    async sendShipdayDraft(shipdayDraft, {
+        notify = false,
+        openPopupOnError = false,
+    } = {}) {
+        const { lastOrderSnapshot } = this.state;
+
+        this.setState({
+            shipdayDraft,
             shipdayStatus: {
                 state: 'sending',
                 label: 'Відправка',
-                message: 'Надсилаю замовлення в Shipday bridge...',
+                message: 'Відправляю...',
                 details: null,
             },
         });
 
         try {
-            const result = await sendOrderToShipday(buildShipdayPayload(shipdayDraft));
+            const result = await sendOrderToShipday(buildShipdayRequest({
+                draft: shipdayDraft,
+                order: lastOrderSnapshot,
+                account: getPosterAccountHint(),
+            }));
+            const shipdayStatus = buildShipdaySuccessStatus(result);
 
             this.setState({
-                shipdayStatus: {
-                    state: 'success',
-                    label: result.mode === 'mock' ? 'Mock success' : 'Відправлено',
-                    message: result.mode === 'mock'
-                        ? 'Backend підтвердив тестову Shipday-відправку без реального API key.'
-                        : 'Shipday прийняв замовлення.',
-                    details: result,
-                },
+                popupOpen: false,
+                shipdayStatus,
             });
+
+            if (notify) {
+                showPosterNotification({
+                    title: APP_CONFIG.name,
+                    message: `Замовлення ${shipdayDraft.orderNumber} відправлено.`,
+                }).catch(() => null);
+            }
+
+            return {
+                ok: true,
+                result,
+            };
         } catch (error) {
-            const responseIssues = error.response && Array.isArray(error.response.issues)
-                ? error.response.issues
-                : [];
-            const firstIssue = responseIssues.length
-                ? responseIssues[0].message
-                : null;
+            const shipdayStatus = buildShipdayErrorStatus(error);
 
             this.setState({
-                shipdayStatus: {
-                    state: 'error',
-                    label: 'Помилка',
-                    message: firstIssue || error.message || 'Не вдалося відправити замовлення.',
-                    details: error.response || null,
-                },
+                shipdayStatus,
             });
+
+            if (notify) {
+                showPosterNotification({
+                    title: APP_CONFIG.name,
+                    message: shipdayStatus.message,
+                }).catch(() => null);
+            }
+
+            if (openPopupOnError && !(error.response && error.response.requiresAccountSettings)) {
+                this.openShipdayPopup({
+                    shipdayDraft,
+                    shipdayStatus,
+                });
+            }
+
+            return {
+                ok: false,
+                error,
+            };
         }
+    }
+
+    async handleShipdaySend() {
+        const { shipdayDraft } = this.state;
+        const missingFields = getMissingShipdayFields(shipdayDraft);
+
+        if (missingFields.length) {
+            this.setState({
+                shipdayStatus: buildMissingFieldsStatus(missingFields),
+            });
+            return;
+        }
+
+        await this.sendShipdayDraft(shipdayDraft);
     }
 
     async refreshStatus() {
@@ -493,6 +800,7 @@ class PosterBaseApp extends React.Component {
         const shipdayActionLabel = shipdayStatus.state === 'sending'
             ? 'Відправка...'
             : 'Відправити в Shipday';
+        const isRealMode = posterMode === 'real';
 
         return (
             <div className="poster-base-app">
@@ -500,42 +808,50 @@ class PosterBaseApp extends React.Component {
                     <section className="info-card info-card--highlight">
                         <div className="poster-base-app__compact-header">
                             <div>
-                                <div className={getPosterModeBadgeClassName(posterMode)}>
-                                    {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
-                                </div>
+                                {!isRealMode && (
+                                    <div className={getPosterModeBadgeClassName(posterMode)}>
+                                        {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
+                                    </div>
+                                )}
                                 <h1>{APP_CONFIG.name}</h1>
-                                <p>
-                                    Мінімальний екран інтеграції для відправки доставки в Shipday.
-                                </p>
+                                {!isRealMode && (
+                                    <p>
+                                        Мінімальний екран інтеграції для відправки доставки в Shipday.
+                                    </p>
+                                )}
                             </div>
-                            <button
-                                type="button"
-                                className="btn btn-outline-primary poster-base-app__refresh"
-                                onClick={this.refreshStatus}
-                                disabled={isRefreshing}
-                            >
-                                {isRefreshing ? 'Оновлення...' : 'Оновити'}
-                            </button>
+                            {!isRealMode && (
+                                <button
+                                    type="button"
+                                    className="btn btn-outline-primary poster-base-app__refresh"
+                                    onClick={this.refreshStatus}
+                                    disabled={isRefreshing}
+                                >
+                                    {isRefreshing ? 'Оновлення...' : 'Оновити'}
+                                </button>
+                            )}
                         </div>
 
-                        <div className="details-list">
-                            <div className="details-list__row">
-                                <span>Джерело</span>
-                                <strong>{contextPlace}</strong>
+                        {!isRealMode && (
+                            <div className="details-list">
+                                <div className="details-list__row">
+                                    <span>Джерело</span>
+                                    <strong>{contextPlace}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Замовлення</span>
+                                    <strong>{shipdayDraft.orderNumber}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Контекст</span>
+                                    <strong>{orderContextSummary}</strong>
+                                </div>
+                                <div className="details-list__row">
+                                    <span>Backend</span>
+                                    <strong>{serviceStatus.label}</strong>
+                                </div>
                             </div>
-                            <div className="details-list__row">
-                                <span>Замовлення</span>
-                                <strong>{shipdayDraft.orderNumber}</strong>
-                            </div>
-                            <div className="details-list__row">
-                                <span>Контекст</span>
-                                <strong>{orderContextSummary}</strong>
-                            </div>
-                            <div className="details-list__row">
-                                <span>Backend</span>
-                                <strong>{serviceStatus.label}</strong>
-                            </div>
-                        </div>
+                        )}
 
                         <div className="shipday-form">
                             <label className="shipday-form__field" htmlFor="shipday-order-number">
@@ -616,7 +932,7 @@ class PosterBaseApp extends React.Component {
                             </label>
                         </div>
 
-                        <div className="mock-controls">
+                        <div className={isRealMode ? 'shipday-form__actions' : 'mock-controls'}>
                             <button
                                 type="button"
                                 className="btn btn-success"
@@ -625,10 +941,14 @@ class PosterBaseApp extends React.Component {
                             >
                                 {shipdayActionLabel}
                             </button>
-                            <span className="shipday-form__hint">{shipdayStatus.message}</span>
+                            {shipdayStatus.message && (
+                                <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
+                                    {shipdayStatus.message}
+                                </span>
+                            )}
                         </div>
 
-                        {this.renderShipdayDetails()}
+                        {!isRealMode && this.renderShipdayDetails()}
                     </section>
 
                     {posterMode === 'mock' && (

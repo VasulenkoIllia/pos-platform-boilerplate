@@ -9,20 +9,28 @@ import express from 'express';
 
 import config, {
     getMissingPosterAuthConfig,
-    getMissingShipdayConfig,
 } from './config.mjs';
+import { createAccountSettingsStore } from './lib/accountSettingsStore.mjs';
 import { createInstallationsStore } from './lib/installationsStore.mjs';
 import {
     renderConfigErrorPage,
     renderConnectPage,
     renderPosterErrorPage,
+    renderSettingsPage,
     renderSuccessPage,
 } from './lib/views.mjs';
+import {
+    buildAccountSettingsFromInput,
+    buildSettingsUrl,
+    resolveShipdayAccountConfig,
+    toPublicAccountSettings,
+} from './services/accountSettings.mjs';
 import {
     buildPosterOauthUrl,
     exchangePosterAuthCode,
     toInstallationRecord,
 } from './services/posterAuth.mjs';
+import { getPosterSpots } from './services/posterWebApi.mjs';
 import {
     createMockShipdayOrder,
     createShipdayOrder,
@@ -32,6 +40,10 @@ import {
 } from './services/shipdayClient.mjs';
 
 const installationsStore = createInstallationsStore(config.poster.installationsFile);
+const accountSettingsStore = createAccountSettingsStore(
+    config.poster.accountSettingsFile,
+    config.security.settingsSecret,
+);
 const currentFilePath = fileURLToPath(import.meta.url);
 const entryFilePath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 
@@ -79,6 +91,8 @@ const maskToken = (token) => {
     return `${token.slice(0, 4)}...${token.slice(-4)}`;
 };
 
+const normalizeAccount = value => String(value || '').trim();
+
 const toPublicInstallation = installation => ({
     account: installation.account,
     accessToken: maskToken(installation.accessToken),
@@ -87,6 +101,131 @@ const toPublicInstallation = installation => ({
     ownerInfo: installation.ownerInfo || null,
     user: installation.user || null,
 });
+
+const buildSettingsRedirectUrl = ({
+    account,
+    flags = {},
+}) => {
+    const url = new URL(
+        buildSettingsUrl({
+            baseUrl: config.backendPublicUrl || `http://localhost:${config.port}`,
+            settingsPath: config.poster.settingsPath,
+            account,
+        }),
+    );
+
+    Object.entries(flags).forEach(([key, enabled]) => {
+        if (enabled) {
+            url.searchParams.set(key, '1');
+        }
+    });
+
+    return url.toString();
+};
+
+const buildSettingsNotices = (request) => {
+    const notices = [];
+
+    if (String(request.query.connected || '') === '1') {
+        notices.push({
+            kind: 'success',
+            message: 'Poster акаунт підключено. Тепер збережи Shipday API key і перевір mapping точок.',
+        });
+    }
+
+    if (String(request.query.saved || '') === '1') {
+        notices.push({
+            kind: 'success',
+            message: 'Налаштування акаунта збережено.',
+        });
+    }
+
+    if (String(request.query.synced || '') === '1') {
+        notices.push({
+            kind: 'success',
+            message: 'Точки Poster успішно синхронізовані.',
+        });
+    }
+
+    if (String(request.query.sync_error || '') === '1') {
+        notices.push({
+            kind: 'danger',
+            message: 'Не вдалося синхронізувати точки Poster. Перевір OAuth і повтори sync.',
+        });
+    }
+
+    return notices;
+};
+
+const resolveRequestAccount = async (request) => {
+    const explicitAccount = normalizeAccount(
+        request.body && typeof request.body === 'object'
+            ? request.body.account
+            : request.query.account,
+    ) || normalizeAccount(request.params.account);
+
+    if (explicitAccount) {
+        return explicitAccount;
+    }
+
+    const installations = await installationsStore.list();
+
+    return installations.length === 1 ? installations[0].account : '';
+};
+
+const syncPosterSpotsForAccount = async (account) => {
+    const installation = await installationsStore.get(account);
+
+    if (!installation) {
+        throw new Error('Poster installation не знайдено для цього акаунта.');
+    }
+
+    const spotsResult = await getPosterSpots({
+        account,
+        accessToken: installation.accessToken,
+        apiBaseUrl: config.poster.apiBaseUrl,
+        timeoutMs: config.poster.apiTimeoutMs,
+    });
+    const currentSettings = await accountSettingsStore.get(account);
+    const nextSettings = await accountSettingsStore.save({
+        ...(currentSettings || {}),
+        account,
+        syncedAt: new Date().toISOString(),
+        posterSpots: spotsResult.spots,
+        defaultSpotId: currentSettings && currentSettings.defaultSpotId
+            ? currentSettings.defaultSpotId
+            : (spotsResult.spots.length === 1 ? spotsResult.spots[0].spotId : ''),
+    });
+
+    return {
+        installation,
+        settings: nextSettings,
+        spotsResult,
+    };
+};
+
+const ensurePickupConfigured = ({
+    resolvedShipdayConfig,
+    account,
+}) => {
+    const pickup = resolvedShipdayConfig.pickup;
+
+    if (pickup && pickup.name && (pickup.address || pickup.formattedAddress)) {
+        return null;
+    }
+
+    return {
+        ok: false,
+        message: 'Для цього акаунта не налаштовано pickup-дані Shipday. Відкрий settings і змепи Poster точку на pickup адресу.',
+        requiresAccountSettings: true,
+        settingsUrl: buildSettingsUrl({
+            baseUrl: config.backendPublicUrl,
+            settingsPath: config.poster.settingsPath,
+            account,
+        }) || null,
+        spotId: resolvedShipdayConfig.resolvedSpotId || null,
+    };
+};
 
 export const createApp = () => {
     const app = express();
@@ -103,14 +242,17 @@ export const createApp = () => {
         },
     }));
     app.use(express.json({ limit: '1mb' }));
-    app.use(express.urlencoded({ extended: false }));
+    app.use(express.urlencoded({ extended: true }));
 
     app.get('/', (request, response) => {
         response.redirect(config.poster.connectPath);
     });
 
     app.get('/health', async (request, response) => {
-        const installations = await installationsStore.list();
+        const [installations, accountSettings] = await Promise.all([
+            installationsStore.list(),
+            accountSettingsStore.list(),
+        ]);
 
         response.json({
             ok: true,
@@ -122,16 +264,19 @@ export const createApp = () => {
                 connectUrl: config.urls.connect || null,
                 oauthCallbackUrl: config.urls.oauthCallback || null,
                 installationsCount: installations.length,
+                accountSettingsCount: accountSettings.length,
             },
             shipday: {
-                configured: Boolean(config.shipday.apiKey),
+                configured: accountSettings.some(settings => settings.shipday && settings.shipday.apiKeyConfigured),
                 mockMode: config.shipday.mockMode,
                 apiBaseUrl: config.shipday.apiBaseUrl,
                 authMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
+                fallbackConfigured: Boolean(config.shipday.apiKey),
             },
             storage: {
                 posterInstallationsFile: config.poster.installationsFile,
+                accountSettingsFile: config.poster.accountSettingsFile,
             },
             checkedAt: new Date().toISOString(),
         });
@@ -182,8 +327,8 @@ export const createApp = () => {
     });
 
     app.get(config.poster.redirectPath, async (request, response, next) => {
-        const code = String(request.query.code || '').trim();
-        const account = String(request.query.account || '').trim();
+        const code = normalizeAccount(request.query.code);
+        const account = normalizeAccount(request.query.account);
 
         if (!code || !account) {
             response.status(400).type('html').send(renderPosterErrorPage({
@@ -212,22 +357,177 @@ export const createApp = () => {
                 authResult,
             }));
 
-            const successUrl = new URL(config.poster.successPath, config.backendPublicUrl || `http://localhost:${config.port}`);
-            successUrl.searchParams.set('account', account);
-            response.redirect(successUrl.toString());
+            let synced = false;
+
+            try {
+                await syncPosterSpotsForAccount(account);
+                synced = true;
+            } catch (error) {
+                synced = false;
+            }
+
+            response.redirect(buildSettingsRedirectUrl({
+                account,
+                flags: {
+                    connected: true,
+                    synced,
+                    sync_error: !synced,
+                },
+            }));
         } catch (error) {
             next(error);
         }
     });
 
     app.get(config.poster.successPath, async (request, response) => {
-        const account = String(request.query.account || '').trim();
-        const installation = account ? await installationsStore.get(account) : null;
+        const account = normalizeAccount(request.query.account);
+        const settingsUrl = buildSettingsUrl({
+            baseUrl: config.backendPublicUrl,
+            settingsPath: config.poster.settingsPath,
+            account,
+        });
 
         response.type('html').send(renderSuccessPage({
             appName: config.appName,
-            account: account || (installation && installation.account) || 'невідомий акаунт',
+            account: account || 'невідомий акаунт',
+            settingsUrl,
         }));
+    });
+
+    app.get(config.poster.settingsPath, async (request, response, next) => {
+        const account = await resolveRequestAccount(request);
+
+        if (!account) {
+            response.status(400).type('html').send(renderConfigErrorPage({
+                appName: config.appName,
+                title: 'Не вдалося визначити Poster account.',
+                heading: 'Потрібен account у query або рівно одна інсталяція в backend',
+                missing: ['account'],
+            }));
+            return;
+        }
+
+        if (String(request.query.sync || '') === '1') {
+            try {
+                await syncPosterSpotsForAccount(account);
+                response.redirect(buildSettingsRedirectUrl({
+                    account,
+                    flags: {
+                        synced: true,
+                    },
+                }));
+            } catch (error) {
+                response.redirect(buildSettingsRedirectUrl({
+                    account,
+                    flags: {
+                        sync_error: true,
+                    },
+                }));
+            }
+
+            return;
+        }
+
+        try {
+            const installation = await installationsStore.get(account);
+
+            if (!installation) {
+                response.status(404).type('html').send(renderPosterErrorPage({
+                    appName: config.appName,
+                    heading: 'Poster акаунт ще не підключено',
+                    message: 'Спочатку завершіть connect flow через Poster.',
+                    errors: [
+                        'На backend немає installation record для цього account.',
+                    ],
+                }));
+                return;
+            }
+
+            let settings = await accountSettingsStore.get(account);
+
+            if (!settings || !Array.isArray(settings.posterSpots) || !settings.posterSpots.length) {
+                try {
+                    const synced = await syncPosterSpotsForAccount(account);
+                    settings = synced.settings;
+                } catch (error) {
+                    settings = settings || null;
+                }
+            }
+
+            response.type('html').send(renderSettingsPage({
+                appName: config.appName,
+                account,
+                installation: toPublicInstallation(installation),
+                settings: toPublicAccountSettings(settings),
+                settingsActionUrl: config.urls.settings,
+                syncSpotsUrl: buildSettingsRedirectUrl({
+                    account,
+                    flags: {
+                        sync: true,
+                    },
+                }),
+                notices: buildSettingsNotices(request),
+            }));
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.post(config.poster.settingsPath, async (request, response, next) => {
+        const account = normalizeAccount(request.body.account);
+
+        if (!account) {
+            response.status(400).json({
+                ok: false,
+                message: 'Потрібен account для збереження налаштувань.',
+            });
+            return;
+        }
+
+        try {
+            const installation = await installationsStore.get(account);
+
+            if (!installation) {
+                response.status(404).json({
+                    ok: false,
+                    message: 'Poster installation не знайдено для цього акаунта.',
+                });
+                return;
+            }
+
+            let existingSettings = await accountSettingsStore.get(account);
+            let syncedSpots = existingSettings && Array.isArray(existingSettings.posterSpots)
+                ? existingSettings.posterSpots
+                : [];
+
+            if (!syncedSpots.length) {
+                try {
+                    const synced = await syncPosterSpotsForAccount(account);
+                    existingSettings = synced.settings;
+                    syncedSpots = synced.settings.posterSpots;
+                } catch (error) {
+                    syncedSpots = [];
+                }
+            }
+
+            const nextSettings = buildAccountSettingsFromInput({
+                account,
+                input: request.body,
+                existingSettings,
+                posterSpots: syncedSpots,
+            });
+
+            await accountSettingsStore.save(nextSettings);
+
+            response.redirect(buildSettingsRedirectUrl({
+                account,
+                flags: {
+                    saved: true,
+                },
+            }));
+        } catch (error) {
+            next(error);
+        }
     });
 
     app.get('/api/poster/installations', async (request, response) => {
@@ -256,37 +556,70 @@ export const createApp = () => {
         });
     });
 
+    app.get('/api/poster/settings/:account', async (request, response) => {
+        const settings = await accountSettingsStore.get(request.params.account);
+
+        response.json({
+            ok: true,
+            item: toPublicAccountSettings(settings),
+        });
+    });
+
     app.post('/api/shipday/orders', async (request, response, next) => {
-        const missingShipdayConfig = getMissingShipdayConfig();
-
-        if (missingShipdayConfig.length) {
-            response.status(500).json({
-                ok: false,
-                message: 'Shipday env не налаштований.',
-                missing: missingShipdayConfig,
-            });
-            return;
-        }
-
         try {
+            const account = await resolveRequestAccount(request);
+
+            if (!account) {
+                response.status(400).json({
+                    ok: false,
+                    message: 'Не вдалося визначити Poster account для відправки в Shipday.',
+                    requiresAccountSettings: true,
+                });
+                return;
+            }
+
+            const accountSettings = await accountSettingsStore.get(account);
+            const posterContext = request.body.poster && typeof request.body.poster === 'object'
+                ? request.body.poster
+                : {};
+            const resolvedShipdayConfig = resolveShipdayAccountConfig({
+                accountSettings,
+                globalShipdayConfig: config.shipday,
+                posterContext,
+            });
+            const pickupError = ensurePickupConfigured({
+                resolvedShipdayConfig,
+                account,
+            });
+
+            if (pickupError) {
+                response.status(400).json(pickupError);
+                return;
+            }
+
             const payload = normalizeShipdayOrderPayload({
                 input: request.body,
-                defaultPickup: config.shipday.defaultPickup,
+                defaultPickup: resolvedShipdayConfig.pickup,
             });
-            const shipdayResponse = config.shipday.mockMode
+            const shipdayResponse = resolvedShipdayConfig.mockMode
                 ? await createMockShipdayOrder({ payload })
                 : await createShipdayOrder({
                     apiBaseUrl: config.shipday.apiBaseUrl,
-                    apiKey: config.shipday.apiKey,
-                    authMode: config.shipday.authMode,
+                    apiKey: resolvedShipdayConfig.apiKey,
+                    authMode: resolvedShipdayConfig.authMode,
                     timeoutMs: config.shipday.timeoutMs,
                     payload,
                 });
 
             response.status(shipdayResponse.ok ? 201 : shipdayResponse.status).json({
                 ok: shipdayResponse.ok,
-                mode: config.shipday.mockMode ? 'mock' : 'live',
+                account,
+                mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
                 requestPayload: payload,
+                pickupSource: {
+                    spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                    posterSpot: resolvedShipdayConfig.posterSpot || null,
+                },
                 shipday: shipdayResponse.body,
             });
         } catch (error) {
@@ -295,33 +628,45 @@ export const createApp = () => {
     });
 
     app.get('/api/shipday/orders/:orderNumber', async (request, response, next) => {
-        const missingShipdayConfig = getMissingShipdayConfig();
-
-        if (missingShipdayConfig.length) {
-            response.status(500).json({
-                ok: false,
-                message: 'Shipday env не налаштований.',
-                missing: missingShipdayConfig,
-            });
-            return;
-        }
-
         try {
-            const shipdayResponse = config.shipday.mockMode
+            const account = await resolveRequestAccount(request);
+            const accountSettings = account ? await accountSettingsStore.get(account) : null;
+            const resolvedShipdayConfig = resolveShipdayAccountConfig({
+                accountSettings,
+                globalShipdayConfig: config.shipday,
+                posterContext: {},
+            });
+
+            if (!resolvedShipdayConfig.mockMode && !resolvedShipdayConfig.apiKey) {
+                response.status(400).json({
+                    ok: false,
+                    message: 'Shipday API key не налаштований для цього акаунта.',
+                    requiresAccountSettings: true,
+                    settingsUrl: account ? buildSettingsUrl({
+                        baseUrl: config.backendPublicUrl,
+                        settingsPath: config.poster.settingsPath,
+                        account,
+                    }) : null,
+                });
+                return;
+            }
+
+            const shipdayResponse = resolvedShipdayConfig.mockMode
                 ? await getMockShipdayOrder({
                     orderNumber: request.params.orderNumber,
                 })
                 : await getShipdayOrder({
                     apiBaseUrl: config.shipday.apiBaseUrl,
-                    apiKey: config.shipday.apiKey,
-                    authMode: config.shipday.authMode,
+                    apiKey: resolvedShipdayConfig.apiKey,
+                    authMode: resolvedShipdayConfig.authMode,
                     timeoutMs: config.shipday.timeoutMs,
                     orderNumber: request.params.orderNumber,
                 });
 
             response.status(shipdayResponse.ok ? 200 : shipdayResponse.status).json({
                 ok: shipdayResponse.ok,
-                mode: config.shipday.mockMode ? 'mock' : 'live',
+                account,
+                mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
                 shipday: shipdayResponse.body,
             });
         } catch (error) {

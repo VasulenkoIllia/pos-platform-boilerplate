@@ -30,14 +30,14 @@ const readJsonResponse = async (response) => {
     }
 };
 
-const sendOrderToShipday = async (payload) => {
+const sendOrderToShipday = async (requestPayload) => {
     const response = await fetch(buildEndpoint('/api/shipday/orders'), {
         method: 'POST',
         headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ payload }),
+        body: JSON.stringify(requestPayload),
     });
     const body = await readJsonResponse(response);
 

@@ -3,16 +3,16 @@ const getConfiguredBackendUrl = () => String(
 ).replace(/\/+$/, '');
 
 const APP_CONFIG = {
-    name: 'POS Service Bridge',
-    description: 'Базовий POS-застосунок для інтеграції Poster із зовнішнім сервісом.',
+    name: 'Shipday',
+    description: 'Інтеграція Poster із Shipday.',
     iconLabels: {
-        functions: 'Інтеграція',
-        order: 'Інтеграція',
+        functions: 'Shipday',
+        order: 'Shipday',
     },
     popup: {
         width: 540,
         height: 760,
-        title: 'POS Service Bridge',
+        title: 'Shipday',
     },
     externalService: {
         name: 'Poster Render backend',
