@@ -253,6 +253,13 @@ export const createApp = () => {
             installationsStore.list(),
             accountSettingsStore.list(),
         ]);
+        const accountSummaries = accountSettings.map(settings => ({
+            account: settings.account,
+            shipdayConfigured: Boolean(settings.shipday && settings.shipday.apiKeyConfigured),
+            mockMode: Boolean(settings.shipday && settings.shipday.mockMode),
+            defaultSpotId: settings.defaultSpotId || '',
+            spotsCount: Array.isArray(settings.posterSpots) ? settings.posterSpots.length : 0,
+        }));
 
         response.json({
             ok: true,
@@ -273,6 +280,7 @@ export const createApp = () => {
                 authMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
                 fallbackConfigured: Boolean(config.shipday.apiKey),
+                accounts: accountSummaries,
             },
             storage: {
                 posterInstallationsFile: config.poster.installationsFile,
