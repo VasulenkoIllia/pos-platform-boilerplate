@@ -43,6 +43,57 @@ npm run dev:backend
 
 `SHIPDAY_API_KEY` тепер не обовʼязковий як глобальний env. Основний сценарій: кожен клієнт зберігає свій Shipday API key на сторінці `/poster/settings` після OAuth.
 
+## Як увімкнути persistent storage
+
+Зараз backend уміє працювати у двох режимах:
+
+- `file` fallback через `.data/*.json`
+- `postgres`, якщо задано `DATABASE_URL`
+
+Для стабільного продакшену потрібен саме Postgres. Достатньо додати:
+
+- `DATABASE_URL`
+- `DATABASE_SSL_MODE=require` або `disable`
+
+Після цього backend сам створить таблиці:
+
+- `poster_installations`
+- `poster_account_settings`
+
+і перестане втрачати інтеграції після redeploy на Render.
+
+## Як ізольовані кілька магазинів
+
+Схема вже multi-tenant:
+
+- `poster_installations.account` — це primary key для OAuth інсталяції конкретного Poster акаунта
+- `poster_account_settings.account` — це primary key для Shipday налаштувань цього ж акаунта
+- `spotId` та pickup mapping зберігаються всередині налаштувань конкретного акаунта
+
+Тобто:
+
+- різні Poster акаунти не можуть перезаписати одне одного
+- однакові `spotId` у різних акаунтів не конфліктують
+- кожен клієнт має свій Shipday API key, свої точки й свій mapping
+
+Для першого етапу цього достатньо. Якщо колись знадобляться складніші звіти або аудит відправок, можна винести `poster_spots` і `pickup_mappings` в окремі таблиці, але для стабільної роботи інтеграції це не обовʼязково.
+
+## Що потрібно для стабільної роботи через базу
+
+1. Створи Render Postgres і підключи його до web service.
+2. Додай `DATABASE_URL` в env сервісу.
+3. Якщо використовуєш Internal Database URL Render, лишай `DATABASE_SSL_MODE=disable`.
+4. Якщо використовуєш External Database URL, став `DATABASE_SSL_MODE=require`.
+5. Залиш `SETTINGS_ENCRYPTION_SECRET` сталим і не змінюй його після запуску, інакше зашифровані Shipday API keys доведеться вводити заново.
+6. Після ввімкнення Postgres ще раз пройди `Під’єднати` і збережи Shipday settings, якщо старі дані були тільки у file-store.
+
+Після цього redeploy більше не повинен скидати:
+
+- Poster OAuth installation
+- account-level Shipday API key
+- synced Poster spots
+- pickup mapping для точок
+
 ## Mock режим для Shipday
 
 За замовчуванням у [render.yaml](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/render.yaml) увімкнено:

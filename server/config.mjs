@@ -36,6 +36,10 @@ const config = {
     port: parseInteger(process.env.PORT, 8787),
     nodeEnv: process.env.NODE_ENV || 'development',
     backendPublicUrl: normalizeBaseUrl(process.env.BACKEND_PUBLIC_URL),
+    database: {
+        url: String(process.env.DATABASE_URL || '').trim(),
+        sslMode: String(process.env.DATABASE_SSL_MODE || 'disable').trim(),
+    },
     poster: {
         applicationId: String(process.env.POSTER_APPLICATION_ID || '').trim(),
         applicationSecret: String(process.env.POSTER_APPLICATION_SECRET || '').trim(),

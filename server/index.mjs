@@ -10,8 +10,7 @@ import express from 'express';
 import config, {
     getMissingPosterAuthConfig,
 } from './config.mjs';
-import { createAccountSettingsStore } from './lib/accountSettingsStore.mjs';
-import { createInstallationsStore } from './lib/installationsStore.mjs';
+import { createStorage } from './lib/storage.mjs';
 import {
     renderConfigErrorPage,
     renderConnectPage,
@@ -39,11 +38,8 @@ import {
     normalizeShipdayOrderPayload,
 } from './services/shipdayClient.mjs';
 
-const installationsStore = createInstallationsStore(config.poster.installationsFile);
-const accountSettingsStore = createAccountSettingsStore(
-    config.poster.accountSettingsFile,
-    config.security.settingsSecret,
-);
+const storage = await createStorage(config);
+const { installationsStore, accountSettingsStore } = storage;
 const currentFilePath = fileURLToPath(import.meta.url);
 const entryFilePath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 
@@ -283,6 +279,7 @@ export const createApp = () => {
                 accounts: accountSummaries,
             },
             storage: {
+                driver: storage.driver,
                 posterInstallationsFile: config.poster.installationsFile,
                 accountSettingsFile: config.poster.accountSettingsFile,
             },
@@ -733,8 +730,30 @@ export const createApp = () => {
 
 export const startServer = () => {
     const app = createApp();
+    const server = http.createServer(app);
+    const shutdown = async (signal) => {
+        console.log(`[server] Received ${signal}, shutting down...`);
 
-    return http.createServer(app).listen(config.port, () => {
+        server.close(async () => {
+            try {
+                await storage.close();
+                console.log('[server] Storage closed.');
+            } catch (error) {
+                console.error('[server] Failed to close storage cleanly.', error);
+            } finally {
+                process.exit(0);
+            }
+        });
+    };
+
+    process.once('SIGINT', () => {
+        void shutdown('SIGINT');
+    });
+    process.once('SIGTERM', () => {
+        void shutdown('SIGTERM');
+    });
+
+    return server.listen(config.port, () => {
         console.log(`[server] ${config.appName} listening on http://0.0.0.0:${config.port}`);
     });
 };

@@ -10,6 +10,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.14.0
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: disable
       - key: BACKEND_PUBLIC_URL
         sync: false
       - key: POSTER_APPLICATION_ID

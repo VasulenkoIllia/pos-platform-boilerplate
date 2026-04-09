@@ -124,7 +124,7 @@ const maskSecret = (value) => {
     return `${normalizedValue.slice(0, 3)}...${normalizedValue.slice(-3)}`;
 };
 
-const normalizeRecord = (account, record, secret) => {
+export const normalizeAccountSettingsRecord = (account, record, secret) => {
     const apiKey = normalizeText(record && record.shipday && record.shipday.apiKey)
         || decryptSecret(record && record.shipday && record.shipday.apiKeyEncrypted, secret);
     const pickupMappingsInput = (record && record.pickupMappings) || {};
@@ -158,7 +158,7 @@ const normalizeRecord = (account, record, secret) => {
     };
 };
 
-const serializeRecord = (record, secret) => ({
+export const serializeAccountSettingsRecord = (record, secret) => ({
     account: record.account,
     createdAt: record.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -235,13 +235,13 @@ export const createAccountSettingsStore = (filePath, secret) => {
                 return null;
             }
 
-            return normalizeRecord(normalizedAccount, record, secret);
+            return normalizeAccountSettingsRecord(normalizedAccount, record, secret);
         },
 
         async list() {
             const data = await readData();
 
-            return Object.entries(data.accounts).map(([account, record]) => normalizeRecord(account, record, secret));
+            return Object.entries(data.accounts).map(([account, record]) => normalizeAccountSettingsRecord(account, record, secret));
         },
 
         async save(record) {
@@ -253,7 +253,7 @@ export const createAccountSettingsStore = (filePath, secret) => {
 
             const data = await readData();
             const existingRecord = data.accounts[normalizedAccount];
-            const normalizedRecord = normalizeRecord(normalizedAccount, {
+            const normalizedRecord = normalizeAccountSettingsRecord(normalizedAccount, {
                 ...existingRecord,
                 ...record,
                 pickupMappings: record.pickupMappings || (existingRecord && existingRecord.pickupMappings) || {},
@@ -264,7 +264,7 @@ export const createAccountSettingsStore = (filePath, secret) => {
                 },
             }, secret);
 
-            data.accounts[normalizedAccount] = serializeRecord(normalizedRecord, secret);
+            data.accounts[normalizedAccount] = serializeAccountSettingsRecord(normalizedRecord, secret);
             await writeData(data);
 
             return normalizedRecord;
