@@ -83,6 +83,10 @@ html, html body {
         -webkit-overflow-scrolling: touch;
     }
 
+    .poster-base-app--real {
+        padding-top: 56px;
+    }
+
     .poster-base-app__panel {
         max-width: 980px;
         margin: 0 auto;
@@ -144,6 +148,10 @@ html, html body {
         flex-direction: column;
         gap: 16px;
         padding: 22px;
+    }
+
+    .poster-base-app--real .info-card {
+        padding: 18px;
     }
 
     .info-card--highlight {
@@ -309,6 +317,10 @@ html, html body {
     @media (max-width: 760px) {
         .poster-base-app {
             padding: 16px;
+        }
+
+        .poster-base-app--real {
+            padding-top: 48px;
         }
 
         .poster-base-app__hero {

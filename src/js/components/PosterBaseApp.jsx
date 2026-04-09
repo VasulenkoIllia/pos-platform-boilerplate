@@ -356,6 +356,7 @@ class PosterBaseApp extends React.Component {
         };
 
         this.isMountedFlag = false;
+        this.appRootRef = React.createRef();
         this.handleApplicationIconClicked = this.handleApplicationIconClicked.bind(this);
         this.handleMockClosePopup = this.handleMockClosePopup.bind(this);
         this.handleMockFunctionsClick = this.handleMockFunctionsClick.bind(this);
@@ -369,6 +370,7 @@ class PosterBaseApp extends React.Component {
         this.openShipdayPopup = this.openShipdayPopup.bind(this);
         this.sendShipdayDraft = this.sendShipdayDraft.bind(this);
         this.syncPosterContext = this.syncPosterContext.bind(this);
+        this.resetPopupScroll = this.resetPopupScroll.bind(this);
         this.lastHydrationRequestId = 0;
     }
 
@@ -383,6 +385,14 @@ class PosterBaseApp extends React.Component {
 
         this.syncPosterContext();
         this.refreshStatus();
+    }
+
+    componentDidUpdate(previousProps, previousState) {
+        const { popupOpen } = this.state;
+
+        if (!previousState.popupOpen && popupOpen) {
+            this.resetPopupScroll();
+        }
     }
 
     componentWillUnmount() {
@@ -599,6 +609,18 @@ class PosterBaseApp extends React.Component {
         });
     }
 
+    resetPopupScroll() {
+        if (!this.appRootRef.current) {
+            return;
+        }
+
+        window.requestAnimationFrame(() => {
+            if (this.appRootRef.current) {
+                this.appRootRef.current.scrollTop = 0;
+            }
+        });
+    }
+
     async sendShipdayDraft(shipdayDraft, {
         notify = false,
         openPopupOnError = false,
@@ -803,24 +825,23 @@ class PosterBaseApp extends React.Component {
         const isRealMode = posterMode === 'real';
 
         return (
-            <div className="poster-base-app">
+            <div
+                ref={this.appRootRef}
+                className={`poster-base-app ${isRealMode ? 'poster-base-app--real' : ''}`}
+            >
                 <div className="poster-base-app__panel">
                     <section className="info-card info-card--highlight">
-                        <div className="poster-base-app__compact-header">
-                            <div>
-                                {!isRealMode && (
+                        {!isRealMode && (
+                            <div className="poster-base-app__compact-header">
+                                <div>
                                     <div className={getPosterModeBadgeClassName(posterMode)}>
                                         {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
                                     </div>
-                                )}
-                                <h1>{APP_CONFIG.name}</h1>
-                                {!isRealMode && (
+                                    <h1>{APP_CONFIG.name}</h1>
                                     <p>
                                         Мінімальний екран інтеграції для відправки доставки в Shipday.
                                     </p>
-                                )}
-                            </div>
-                            {!isRealMode && (
+                                </div>
                                 <button
                                     type="button"
                                     className="btn btn-outline-primary poster-base-app__refresh"
@@ -829,8 +850,8 @@ class PosterBaseApp extends React.Component {
                                 >
                                     {isRefreshing ? 'Оновлення...' : 'Оновити'}
                                 </button>
-                            )}
-                        </div>
+                            </div>
+                        )}
 
                         {!isRealMode && (
                             <div className="details-list">
