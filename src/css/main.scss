@@ -84,7 +84,12 @@ html, html body {
     }
 
     .poster-base-app--real {
-        padding-top: 56px;
+        padding-top: 20px;
+        padding-bottom: 28px;
+    }
+
+    .poster-base-app--real .poster-base-app__panel {
+        max-width: 100%;
     }
 
     .poster-base-app__panel {
@@ -151,7 +156,16 @@ html, html body {
     }
 
     .poster-base-app--real .info-card {
-        padding: 18px;
+        gap: 14px;
+        padding: 16px 18px 24px;
+    }
+
+    .poster-base-app--real .shipday-form {
+        gap: 12px;
+    }
+
+    .poster-base-app--real .shipday-form__actions {
+        padding-bottom: 6px;
     }
 
     .info-card--highlight {
@@ -320,7 +334,8 @@ html, html body {
         }
 
         .poster-base-app--real {
-            padding-top: 48px;
+            padding-top: 16px;
+            padding-bottom: 20px;
         }
 
         .poster-base-app__hero {
@@ -352,6 +367,60 @@ html, html body {
         .details-list__row strong {
             max-width: 100%;
             text-align: left;
+        }
+    }
+
+    @media (max-height: 820px) {
+        .poster-base-app--real {
+            padding-top: 12px;
+            padding-bottom: 16px;
+        }
+
+        .poster-base-app--real .info-card {
+            gap: 10px;
+            padding: 14px 16px 18px;
+        }
+
+        .poster-base-app--real .shipday-form {
+            gap: 10px;
+        }
+
+        .poster-base-app--real .shipday-form__field {
+            gap: 6px;
+        }
+
+        .poster-base-app--real .shipday-form__field span {
+            font-size: 12px;
+        }
+
+        .poster-base-app--real input.form-control {
+            height: 36px;
+            padding-top: 6px;
+            padding-bottom: 6px;
+        }
+    }
+
+    @media (max-height: 720px) {
+        .poster-base-app--real {
+            padding-top: 8px;
+            padding-bottom: 12px;
+        }
+
+        .poster-base-app--real .info-card {
+            padding: 12px 14px 16px;
+        }
+
+        .poster-base-app--real .shipday-form {
+            grid-template-columns: 1fr;
+        }
+
+        .poster-base-app--real .shipday-form__field,
+        .poster-base-app--real .shipday-form__field--full {
+            grid-column: 1 / -1;
+        }
+
+        .poster-base-app--real .shipday-form__actions {
+            gap: 8px;
         }
     }
 }

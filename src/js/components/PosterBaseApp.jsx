@@ -300,6 +300,32 @@ const getMissingShipdayFields = (draft) => {
     return missingFields;
 };
 
+const getPopupViewport = () => {
+    if (typeof window === 'undefined') {
+        return {
+            width: APP_CONFIG.popup.width,
+            height: APP_CONFIG.popup.height,
+        };
+    }
+
+    return {
+        width: window.innerWidth || APP_CONFIG.popup.width,
+        height: window.innerHeight || APP_CONFIG.popup.height,
+    };
+};
+
+const buildResponsivePopupOptions = () => {
+    const viewport = getPopupViewport();
+    const width = Math.max(460, Math.min(APP_CONFIG.popup.width, viewport.width - 120));
+    const height = Math.max(560, Math.min(APP_CONFIG.popup.height, viewport.height - 120));
+
+    return {
+        ...APP_CONFIG.popup,
+        width,
+        height,
+    };
+};
+
 const buildMissingFieldsStatus = missingFields => ({
     state: 'error',
     label: 'Заповни поля',
@@ -600,7 +626,7 @@ class PosterBaseApp extends React.Component {
         shipdayDraft,
         shipdayStatus = INITIAL_SHIPDAY_STATUS,
     }) {
-        openPosterPopup(APP_CONFIG.popup);
+        openPosterPopup(buildResponsivePopupOptions());
 
         this.setState({
             popupOpen: true,
