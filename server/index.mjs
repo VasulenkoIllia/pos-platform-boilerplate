@@ -664,6 +664,13 @@ export const createApp = () => {
                 httpStatus: shipdayResponse.status,
                 confirmed,
                 reference: reference || null,
+                resolvedConfig: {
+                    account,
+                    authMode: resolvedShipdayConfig.authMode,
+                    mockMode: resolvedShipdayConfig.mockMode,
+                    hasConfiguredApiKey: resolvedShipdayConfig.hasConfiguredApiKey,
+                    resolvedSpotId: resolvedShipdayConfig.resolvedSpotId || null,
+                },
                 requestPayload: payload,
                 pickupSource: {
                     spotId: resolvedShipdayConfig.resolvedSpotId || null,
@@ -680,7 +687,22 @@ export const createApp = () => {
                 return;
             }
 
-            response.status(shipdayResponse.ok ? 201 : shipdayResponse.status).json(responsePayload);
+            if (!shipdayResponse.ok) {
+                response.status(shipdayResponse.status).json({
+                    ...responsePayload,
+                    message: (
+                        shipdayResponse.body
+                        && (
+                            shipdayResponse.body.errorMessage
+                            || shipdayResponse.body.message
+                            || shipdayResponse.body.raw
+                        )
+                    ) || `Shipday повернув HTTP ${shipdayResponse.status}.`,
+                });
+                return;
+            }
+
+            response.status(201).json(responsePayload);
         } catch (error) {
             next(error);
         }

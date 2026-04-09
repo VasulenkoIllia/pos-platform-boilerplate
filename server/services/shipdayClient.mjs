@@ -1,42 +1,7 @@
 import { z } from 'zod';
 
-const LocationSchema = z.object({
-    name: z.string().trim().min(1).optional(),
-    address: z.string().trim().min(1).optional(),
-    formattedAddress: z.string().trim().min(1).optional(),
-    phone: z.string().trim().min(1).optional(),
-    email: z.string().email().optional(),
-    lat: z.number().finite().optional(),
-    lng: z.number().finite().optional(),
-}).passthrough();
-
-const ShipdayOrderSchema = z.object({
+const FlexibleOrderSchema = z.object({
     orderNumber: z.union([z.string(), z.number()]),
-    orderItem: z.string().trim().min(1).optional(),
-    paymentMethod: z.string().trim().min(1).optional(),
-    orderSource: z.string().trim().min(1).optional(),
-    orderTotal: z.number().finite().optional(),
-    deliveryFee: z.number().finite().optional(),
-    discount: z.number().finite().optional(),
-    tip: z.number().finite().optional(),
-    tax: z.number().finite().optional(),
-    deliveryInstruction: z.string().trim().min(1).optional(),
-    requestedPickupTime: z.string().trim().min(1).optional(),
-    requestedDeliveryTime: z.string().trim().min(1).optional(),
-    pickup: LocationSchema.optional(),
-    delivery: LocationSchema,
-    items: z.array(z.object({
-        name: z.string().trim().min(1),
-        quantity: z.number().finite().optional(),
-        price: z.number().finite().optional(),
-    }).passthrough()).optional(),
-    totals: z.object({
-        orderTotal: z.number().finite().optional(),
-        deliveryFee: z.number().finite().optional(),
-        discount: z.number().finite().optional(),
-        tip: z.number().finite().optional(),
-        tax: z.number().finite().optional(),
-    }).passthrough().optional(),
 }).passthrough();
 
 const readJsonResponse = async (response) => {
@@ -64,23 +29,213 @@ const withTimeout = async (requestFactory, timeoutMs) => {
     }
 };
 
-const formatItems = items => items
-    .map((item) => {
-        const quantity = item.quantity ? `x${item.quantity}` : '';
-        const price = typeof item.price === 'number' ? `(${item.price})` : '';
+const normalizeText = (value) => {
+    const normalizedValue = String(value || '').trim();
 
-        return [item.name, quantity, price].filter(Boolean).join(' ');
-    })
-    .join(', ');
+    return normalizedValue || undefined;
+};
 
-const ensureLocation = (label, location) => {
-    if (!location || (!location.address && !location.formattedAddress)) {
-        throw new Error(`${label} повинен містити address або formattedAddress.`);
+const normalizeNumber = (value) => {
+    if (value === null || value === undefined || value === '') {
+        return undefined;
     }
 
-    if (!location.name) {
-        throw new Error(`${label} повинен містити name.`);
+    const parsedValue = Number(value);
+
+    return Number.isFinite(parsedValue) ? parsedValue : undefined;
+};
+
+const normalizeBoolean = (value) => {
+    if (typeof value === 'boolean') {
+        return value;
     }
+
+    if (value === 'true') {
+        return true;
+    }
+
+    if (value === 'false') {
+        return false;
+    }
+
+    return undefined;
+};
+
+const normalizeDateValue = (value) => {
+    const textValue = normalizeText(value);
+
+    if (!textValue) {
+        return undefined;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(textValue)) {
+        return textValue;
+    }
+
+    const parsedDate = new Date(textValue);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+        return undefined;
+    }
+
+    return parsedDate.toISOString().slice(0, 10);
+};
+
+const normalizeTimeValue = (value) => {
+    const textValue = normalizeText(value);
+
+    if (!textValue) {
+        return undefined;
+    }
+
+    if (/^\d{2}:\d{2}:\d{2}$/.test(textValue)) {
+        return textValue;
+    }
+
+    const isoTimeMatch = textValue.match(/T(\d{2}:\d{2}:\d{2})/);
+
+    if (isoTimeMatch) {
+        return isoTimeMatch[1];
+    }
+
+    const timeMatch = textValue.match(/\b(\d{2}:\d{2}:\d{2})\b/);
+
+    return timeMatch ? timeMatch[1] : undefined;
+};
+
+const pickFirstText = (...values) => {
+    for (const value of values) {
+        const normalizedValue = normalizeText(value);
+
+        if (normalizedValue) {
+            return normalizedValue;
+        }
+    }
+
+    return undefined;
+};
+
+const pickFirstNumber = (...values) => {
+    for (const value of values) {
+        const normalizedValue = normalizeNumber(value);
+
+        if (normalizedValue !== undefined) {
+            return normalizedValue;
+        }
+    }
+
+    return undefined;
+};
+
+const ensureRequiredText = (fieldName, value) => {
+    const normalizedValue = normalizeText(value);
+
+    if (!normalizedValue) {
+        throw new Error(`Shipday payload повинен містити ${fieldName}.`);
+    }
+
+    return normalizedValue;
+};
+
+const normalizeLocation = (location) => {
+    if (!location || typeof location !== 'object') {
+        return {};
+    }
+
+    return {
+        name: normalizeText(location.name),
+        address: normalizeText(location.address),
+        formattedAddress: normalizeText(location.formattedAddress),
+        phone: normalizeText(location.phone),
+        email: normalizeText(location.email),
+        lat: normalizeNumber(location.lat),
+        lng: normalizeNumber(location.lng),
+    };
+};
+
+const normalizeShipdayItem = (item) => {
+    if (!item || typeof item !== 'object') {
+        return null;
+    }
+
+    const name = pickFirstText(item.name, item.product_name, item.title);
+
+    if (!name) {
+        return null;
+    }
+
+    const normalizedItem = {
+        name,
+        quantity: pickFirstNumber(item.quantity, item.count, item.num) || 1,
+    };
+    const unitPrice = pickFirstNumber(item.unitPrice, item.price);
+    const addOns = normalizeText(item.addOns);
+    const detail = pickFirstText(item.detail, item.comment, item.notes);
+
+    if (unitPrice !== undefined) {
+        normalizedItem.unitPrice = unitPrice;
+    }
+
+    if (addOns) {
+        normalizedItem.addOns = addOns;
+    }
+
+    if (detail) {
+        normalizedItem.detail = detail;
+    }
+
+    return normalizedItem;
+};
+
+const normalizeShipdayItems = (payload) => {
+    const candidates = [
+        Array.isArray(payload.orderItem) ? payload.orderItem : null,
+        Array.isArray(payload.orderItems) ? payload.orderItems : null,
+        Array.isArray(payload.items) ? payload.items : null,
+        Array.isArray(payload.products) ? payload.products : null,
+    ].find(Boolean) || [];
+
+    const normalizedItems = candidates
+        .map(normalizeShipdayItem)
+        .filter(Boolean);
+
+    if (normalizedItems.length) {
+        return normalizedItems;
+    }
+
+    const legacySummary = typeof payload.orderItem === 'string'
+        ? normalizeText(payload.orderItem)
+        : normalizeText(payload.orderItemsSummary);
+
+    return legacySummary
+        ? [{ name: legacySummary, quantity: 1 }]
+        : [];
+};
+
+const removeEmptyValues = (value) => {
+    if (Array.isArray(value)) {
+        return value
+            .map(removeEmptyValues)
+            .filter(item => item !== undefined);
+    }
+
+    if (value && typeof value === 'object') {
+        return Object.entries(value).reduce((accumulator, [key, currentValue]) => {
+            const normalizedValue = removeEmptyValues(currentValue);
+
+            if (normalizedValue !== undefined) {
+                accumulator[key] = normalizedValue;
+            }
+
+            return accumulator;
+        }, {});
+    }
+
+    if (value === null || value === undefined || value === '') {
+        return undefined;
+    }
+
+    return value;
 };
 
 export const normalizeShipdayOrderPayload = ({
@@ -88,36 +243,71 @@ export const normalizeShipdayOrderPayload = ({
     defaultPickup,
 }) => {
     const payload = input && input.payload ? input.payload : input;
-    const parsed = ShipdayOrderSchema.parse(payload);
-    const pickup = {
-        ...defaultPickup,
-        ...(parsed.pickup || {}),
+    const parsed = FlexibleOrderSchema.parse(payload);
+    const normalizedPickup = {
+        ...normalizeLocation(defaultPickup),
+        ...normalizeLocation(parsed.pickup),
     };
-    const delivery = {
-        ...parsed.delivery,
-    };
-    const normalizedPayload = {
-        ...parsed,
-        orderNumber: String(parsed.orderNumber),
-        pickup,
-        delivery,
-        orderSource: parsed.orderSource || 'Poster POS Service Bridge',
-    };
+    const normalizedDelivery = normalizeLocation(parsed.delivery);
+    const orderItems = normalizeShipdayItems(parsed);
+    const restaurantName = ensureRequiredText(
+        'restaurantName',
+        pickFirstText(parsed.restaurantName, normalizedPickup.name),
+    );
+    const restaurantAddress = ensureRequiredText(
+        'restaurantAddress',
+        pickFirstText(parsed.restaurantAddress, normalizedPickup.formattedAddress, normalizedPickup.address),
+    );
+    const customerName = ensureRequiredText(
+        'customerName',
+        pickFirstText(parsed.customerName, normalizedDelivery.name),
+    );
+    const customerAddress = ensureRequiredText(
+        'customerAddress',
+        pickFirstText(
+            parsed.customerAddress,
+            parsed.deliveryAddress,
+            normalizedDelivery.formattedAddress,
+            normalizedDelivery.address,
+        ),
+    );
+    const customerPhoneNumber = ensureRequiredText(
+        'customerPhoneNumber',
+        pickFirstText(parsed.customerPhoneNumber, parsed.customerPhone, normalizedDelivery.phone),
+    );
 
-    if (!normalizedPayload.orderItem && parsed.items && parsed.items.length) {
-        normalizedPayload.orderItem = formatItems(parsed.items);
-    }
-
-    if (parsed.totals) {
-        normalizedPayload.orderTotal = normalizedPayload.orderTotal ?? parsed.totals.orderTotal;
-        normalizedPayload.deliveryFee = normalizedPayload.deliveryFee ?? parsed.totals.deliveryFee;
-        normalizedPayload.discount = normalizedPayload.discount ?? parsed.totals.discount;
-        normalizedPayload.tip = normalizedPayload.tip ?? parsed.totals.tip;
-        normalizedPayload.tax = normalizedPayload.tax ?? parsed.totals.tax;
-    }
-
-    ensureLocation('pickup', normalizedPayload.pickup);
-    ensureLocation('delivery', normalizedPayload.delivery);
+    const normalizedPayload = removeEmptyValues({
+        orderNumber: String(parsed.orderNumber).trim(),
+        customerName,
+        customerAddress,
+        customerEmail: pickFirstText(parsed.customerEmail, normalizedDelivery.email),
+        customerPhoneNumber,
+        restaurantName,
+        restaurantAddress,
+        restaurantPhoneNumber: pickFirstText(parsed.restaurantPhoneNumber, normalizedPickup.phone),
+        expectedDeliveryDate: normalizeDateValue(parsed.expectedDeliveryDate || parsed.requestedDeliveryTime),
+        expectedPickupTime: normalizeTimeValue(parsed.expectedPickupTime || parsed.requestedPickupTime),
+        expectedDeliveryTime: normalizeTimeValue(parsed.expectedDeliveryTime || parsed.requestedDeliveryTime),
+        pickupLatitude: pickFirstNumber(parsed.pickupLatitude, normalizedPickup.lat),
+        pickupLongitude: pickFirstNumber(parsed.pickupLongitude, normalizedPickup.lng),
+        deliveryLatitude: pickFirstNumber(parsed.deliveryLatitude, normalizedDelivery.lat),
+        deliveryLongitude: pickFirstNumber(parsed.deliveryLongitude, normalizedDelivery.lng),
+        tips: pickFirstNumber(parsed.tips, parsed.tip),
+        tax: pickFirstNumber(parsed.tax),
+        discountAmount: pickFirstNumber(parsed.discountAmount, parsed.discount),
+        deliveryFee: pickFirstNumber(parsed.deliveryFee),
+        totalOrderCost: pickFirstNumber(parsed.totalOrderCost, parsed.orderTotal),
+        pickupInstruction: normalizeText(parsed.pickupInstruction),
+        deliveryInstruction: normalizeText(parsed.deliveryInstruction),
+        orderSource: pickFirstText(parsed.orderSource, 'Poster POS Service Bridge'),
+        additionalId: pickFirstText(parsed.additionalId),
+        clientRestaurantId: pickFirstNumber(parsed.clientRestaurantId),
+        paymentMethod: normalizeText(parsed.paymentMethod),
+        creditCardType: normalizeText(parsed.creditCardType),
+        creditCardId: normalizeText(parsed.creditCardId),
+        isCatering: normalizeBoolean(parsed.isCatering),
+        orderItem: orderItems.length ? orderItems : undefined,
+    });
 
     return normalizedPayload;
 };
@@ -136,12 +326,8 @@ export const createMockShipdayOrder = async ({
             orderNumber: payload.orderNumber,
             trackingId: `mock-${payload.orderNumber}`,
             status: 'NOT_ASSIGNED',
-            delivery: payload.delivery,
-            pickup: payload.pickup,
-            requestedDeliveryTime: payload.requestedDeliveryTime || null,
-            estimatedPickupTime: payload.requestedPickupTime || null,
             createdAt,
-            message: 'Mock Shipday order created. Реальний API key ще не підключений.',
+            message: 'Mock Shipday order created.',
         },
     };
 };

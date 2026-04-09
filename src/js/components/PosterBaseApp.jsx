@@ -78,6 +78,53 @@ const buildClientName = (client) => {
     return [client.firstname, client.lastname].filter(Boolean).join(' ').trim();
 };
 
+const findCustomerPhone = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        (order.client && order.client.phone)
+        || (order.deliveryInfo && order.deliveryInfo.phone)
+        || order.clientPhone
+        || order.phone
+        || '',
+    ).trim();
+};
+
+const findCustomerEmail = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        (order.client && order.client.email)
+        || (order.deliveryInfo && order.deliveryInfo.email)
+        || order.clientEmail
+        || order.email
+        || '',
+    ).trim();
+};
+
+const findCustomerName = (order) => {
+    const clientName = buildClientName(order && order.client);
+
+    if (clientName) {
+        return clientName;
+    }
+
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        order.customerName
+        || order.client_name
+        || order.clientName
+        || '',
+    ).trim();
+};
+
 const getPosterSpotId = (order) => {
     if (!order) {
         return '';
@@ -157,6 +204,12 @@ const normalizeMoneyValue = (value) => {
     return numericValue.toFixed(2);
 };
 
+const normalizeMoneyNumber = (value) => {
+    const normalizedValue = normalizeMoneyValue(value);
+
+    return normalizedValue ? Number(normalizedValue) : undefined;
+};
+
 const findAddressString = (order) => {
     if (!order) {
         return '';
@@ -208,14 +261,48 @@ const findProductsSummary = (order) => {
     }).join(', ');
 };
 
+const findShipdayItems = (order) => {
+    const products = getOrderProducts(order);
+
+    if (!Array.isArray(products) || !products.length) {
+        return [];
+    }
+
+    return products.map((item) => {
+        const name = String(item.product_name || item.name || '').trim();
+
+        if (!name) {
+            return null;
+        }
+
+        const quantity = Number(item.count || item.quantity || item.num || 1);
+        const unitPrice = normalizeMoneyNumber(item.unitPrice || item.price);
+        const detail = String(item.comment || item.notes || '').trim();
+        const normalizedItem = {
+            name,
+            quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+        };
+
+        if (unitPrice !== undefined) {
+            normalizedItem.unitPrice = unitPrice;
+        }
+
+        if (detail) {
+            normalizedItem.detail = detail;
+        }
+
+        return normalizedItem;
+    }).filter(Boolean);
+};
+
 const buildShipdayDraft = (order) => {
     const draftOrderNumber = getOrderId(order) || `MANUAL-${Date.now()}`;
-    const client = order && order.client ? order.client : {};
 
     return {
         orderNumber: String(draftOrderNumber),
-        customerName: buildClientName(client),
-        customerPhone: client.phone || '',
+        customerName: findCustomerName(order),
+        customerPhone: findCustomerPhone(order),
+        customerEmail: findCustomerEmail(order),
         deliveryAddress: findAddressString(order),
         deliveryInstruction: (
             order
@@ -226,6 +313,7 @@ const buildShipdayDraft = (order) => {
             )
         ) || '',
         orderItem: findProductsSummary(order),
+        items: findShipdayItems(order),
         orderTotal: normalizeMoneyValue(order && (order.totalSum || order.total || order.sum)),
     };
 };
@@ -239,19 +327,19 @@ const buildShipdayPayload = (draft) => {
 
     const payload = {
         orderNumber: String(draft.orderNumber || '').trim(),
-        orderItem: normalizeText(draft.orderItem),
+        customerName: normalizeText(draft.customerName),
+        customerAddress: normalizeText(draft.deliveryAddress),
+        customerEmail: normalizeText(draft.customerEmail),
+        customerPhoneNumber: normalizeText(draft.customerPhone),
         orderSource: 'Poster POS Service Bridge',
         deliveryInstruction: normalizeText(draft.deliveryInstruction),
-        delivery: {
-            name: normalizeText(draft.customerName),
-            phone: normalizeText(draft.customerPhone),
-            address: normalizeText(draft.deliveryAddress),
-            formattedAddress: normalizeText(draft.deliveryAddress),
-        },
+        orderItem: Array.isArray(draft.items) && draft.items.length
+            ? draft.items
+            : normalizeText(draft.orderItem),
     };
 
     if (draft.orderTotal) {
-        payload.orderTotal = Number(draft.orderTotal);
+        payload.totalOrderCost = Number(draft.orderTotal);
     }
 
     return payload;
@@ -291,6 +379,10 @@ const getMissingShipdayFields = (draft) => {
 
     if (!String(draft.customerName || '').trim()) {
         missingFields.push('імʼя клієнта');
+    }
+
+    if (!String(draft.customerPhone || '').trim()) {
+        missingFields.push('телефон клієнта');
     }
 
     if (!String(draft.deliveryAddress || '').trim()) {
@@ -374,11 +466,16 @@ const buildShipdayErrorStatus = (error) => {
     const firstIssue = responseIssues.length
         ? responseIssues[0].message
         : null;
+    const shipdayErrorMessage = error.response && error.response.shipday && (
+        error.response.shipday.errorMessage
+        || error.response.shipday.message
+        || error.response.shipday.raw
+    );
 
     return {
         state: 'error',
         label: 'Помилка',
-        message: firstIssue || error.message || 'Не вдалося відправити замовлення.',
+        message: firstIssue || shipdayErrorMessage || error.message || 'Не вдалося відправити замовлення.',
         details: error.response || null,
     };
 };
