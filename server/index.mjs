@@ -161,7 +161,14 @@ const resolveRequestAccount = async (request) => {
     ) || normalizeAccount(request.params.account);
 
     if (explicitAccount) {
-        return explicitAccount;
+        const [installation, settings] = await Promise.all([
+            installationsStore.get(explicitAccount),
+            accountSettingsStore.get(explicitAccount),
+        ]);
+
+        if (installation || settings) {
+            return explicitAccount;
+        }
     }
 
     const installations = await installationsStore.list();
