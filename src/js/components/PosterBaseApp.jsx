@@ -335,12 +335,35 @@ const buildMissingFieldsStatus = missingFields => ({
     },
 });
 
+const extractShipdayReference = result => String(
+    (result && result.reference)
+    || (result && result.shipday && (
+        result.shipday.trackingId
+        || result.shipday.orderNumber
+        || result.shipday.orderId
+        || result.shipday.id
+    ))
+    || '',
+).trim();
+
+const buildShipdaySuccessMessage = (result) => {
+    const shipdayReference = extractShipdayReference(result);
+
+    if (result.mode === 'mock') {
+        return 'Тестову відправку виконано.';
+    }
+
+    if (shipdayReference) {
+        return `Shipday підтвердив замовлення ${shipdayReference}.`;
+    }
+
+    return 'Shipday підтвердив прийом замовлення.';
+};
+
 const buildShipdaySuccessStatus = result => ({
     state: 'success',
     label: result.mode === 'mock' ? 'Mock success' : 'Відправлено',
-    message: result.mode === 'mock'
-        ? 'Тестову відправку виконано.'
-        : 'Замовлення прийнято.',
+    message: buildShipdaySuccessMessage(result),
     details: result,
 });
 
@@ -670,6 +693,14 @@ class PosterBaseApp extends React.Component {
                 account: getPosterAccountHint(),
             }));
             const shipdayStatus = buildShipdaySuccessStatus(result);
+            const shipdayReference = extractShipdayReference(result);
+            let notificationMessage = `Shipday прийняв замовлення ${shipdayDraft.orderNumber}.`;
+
+            if (result.mode === 'mock') {
+                notificationMessage = `Тестове замовлення ${shipdayDraft.orderNumber} відправлено.`;
+            } else if (shipdayReference) {
+                notificationMessage = `Shipday підтвердив замовлення ${shipdayReference}.`;
+            }
 
             this.setState({
                 popupOpen: false,
@@ -679,7 +710,7 @@ class PosterBaseApp extends React.Component {
             if (notify) {
                 showPosterNotification({
                     title: APP_CONFIG.name,
-                    message: `Замовлення ${shipdayDraft.orderNumber} відправлено.`,
+                    message: notificationMessage,
                 }).catch(() => null);
             }
 
@@ -809,9 +840,12 @@ class PosterBaseApp extends React.Component {
         }
 
         return (
-            <pre className="service-json">
-                {JSON.stringify(shipdayStatus.details, null, 2)}
-            </pre>
+            <details className="shipday-debug">
+                <summary>Shipday debug</summary>
+                <pre className="service-json">
+                    {JSON.stringify(shipdayStatus.details, null, 2)}
+                </pre>
+            </details>
         );
     }
 
@@ -995,7 +1029,7 @@ class PosterBaseApp extends React.Component {
                             )}
                         </div>
 
-                        {!isRealMode && this.renderShipdayDetails()}
+                        {this.renderShipdayDetails()}
                     </section>
 
                     {posterMode === 'mock' && (

@@ -223,6 +223,41 @@ const ensurePickupConfigured = ({
     };
 };
 
+const extractShipdayReference = (shipdayBody) => {
+    if (!shipdayBody || typeof shipdayBody !== 'object') {
+        return '';
+    }
+
+    const candidates = [
+        shipdayBody.trackingId,
+        shipdayBody.orderNumber,
+        shipdayBody.orderId,
+        shipdayBody.id,
+        shipdayBody.data && shipdayBody.data.trackingId,
+        shipdayBody.data && shipdayBody.data.orderNumber,
+        shipdayBody.data && shipdayBody.data.orderId,
+        shipdayBody.data && shipdayBody.data.id,
+        shipdayBody.result && shipdayBody.result.trackingId,
+        shipdayBody.result && shipdayBody.result.orderNumber,
+        shipdayBody.result && shipdayBody.result.orderId,
+        shipdayBody.result && shipdayBody.result.id,
+    ];
+
+    return String(candidates.find(Boolean) || '').trim();
+};
+
+const isShipdayCreateConfirmed = (shipdayBody) => {
+    if (!shipdayBody || typeof shipdayBody !== 'object') {
+        return false;
+    }
+
+    if (extractShipdayReference(shipdayBody)) {
+        return true;
+    }
+
+    return shipdayBody.success === true;
+};
+
 export const createApp = () => {
     const app = express();
 
@@ -615,18 +650,34 @@ export const createApp = () => {
                     timeoutMs: config.shipday.timeoutMs,
                     payload,
                 });
-
-            response.status(shipdayResponse.ok ? 201 : shipdayResponse.status).json({
-                ok: shipdayResponse.ok,
+            const confirmed = resolvedShipdayConfig.mockMode
+                ? true
+                : isShipdayCreateConfirmed(shipdayResponse.body);
+            const reference = extractShipdayReference(shipdayResponse.body);
+            const responsePayload = {
+                ok: shipdayResponse.ok && confirmed,
                 account,
                 mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
+                httpStatus: shipdayResponse.status,
+                confirmed,
+                reference: reference || null,
                 requestPayload: payload,
                 pickupSource: {
                     spotId: resolvedShipdayConfig.resolvedSpotId || null,
                     posterSpot: resolvedShipdayConfig.posterSpot || null,
                 },
                 shipday: shipdayResponse.body,
-            });
+            };
+
+            if (shipdayResponse.ok && !resolvedShipdayConfig.mockMode && !confirmed) {
+                response.status(502).json({
+                    ...responsePayload,
+                    message: 'Shipday відповів без явного підтвердження створення замовлення.',
+                });
+                return;
+            }
+
+            response.status(shipdayResponse.ok ? 201 : shipdayResponse.status).json(responsePayload);
         } catch (error) {
             next(error);
         }
