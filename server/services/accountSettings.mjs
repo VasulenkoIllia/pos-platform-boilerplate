@@ -1,5 +1,15 @@
 const normalizeText = value => String(value || '').trim();
 
+const normalizeAuthMode = (value) => {
+    const normalizedValue = normalizeText(value).toLowerCase();
+
+    if (normalizedValue === 'basic') {
+        return 'basic';
+    }
+
+    return 'x-api-key';
+};
+
 const normalizeFloat = (value) => {
     if (value === null || value === undefined || value === '') {
         return null;
@@ -106,7 +116,7 @@ export const toPublicAccountSettings = (settings) => {
             apiKeyMasked: settings.shipday && settings.shipday.apiKeyMasked
                 ? settings.shipday.apiKeyMasked
                 : maskSecret(settings.shipday && settings.shipday.apiKey),
-            authMode: normalizeText(settings.shipday && settings.shipday.authMode) || 'x-api-key',
+            authMode: normalizeAuthMode(settings.shipday && settings.shipday.authMode),
             mockMode: Boolean(settings.shipday && settings.shipday.mockMode),
         },
     };
@@ -149,7 +159,7 @@ export const resolveShipdayAccountConfig = ({
     const settings = accountSettings || null;
     const shipdaySettings = settings && settings.shipday ? settings.shipday : {};
     const apiKey = normalizeText(shipdaySettings.apiKey) || normalizeText(globalShipdayConfig.apiKey);
-    const authMode = normalizeText(shipdaySettings.authMode) || normalizeText(globalShipdayConfig.authMode) || 'x-api-key';
+    const authMode = normalizeAuthMode(shipdaySettings.authMode || globalShipdayConfig.authMode);
     const mockMode = Boolean(shipdaySettings.mockMode) || !apiKey;
     const posterSpotMap = buildPosterSpotMap(settings && settings.posterSpots);
     const pickupMappings = settings && settings.pickupMappings ? settings.pickupMappings : {};
@@ -227,9 +237,10 @@ export const buildAccountSettingsFromInput = ({
         : {};
     const apiKeyInput = normalizeText(shipdayInput.apiKey);
     const apiKey = apiKeyInput || normalizeText(currentSettings.shipday && currentSettings.shipday.apiKey);
-    const authMode = normalizeText(shipdayInput.authMode)
-        || normalizeText(currentSettings.shipday && currentSettings.shipday.authMode)
-        || 'x-api-key';
+    const authMode = normalizeAuthMode(
+        shipdayInput.authMode
+        || (currentSettings.shipday && currentSettings.shipday.authMode),
+    );
     const mockMode = Boolean(shipdayInput.mockMode);
     const defaultSpotIdInput = normalizeSpotId(input && input.defaultSpotId);
     const defaultSpotId = defaultSpotIdInput

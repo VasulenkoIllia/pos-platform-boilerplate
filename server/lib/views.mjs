@@ -294,6 +294,15 @@ const renderLayout = ({
             border-color: rgba(159, 47, 47, 0.25);
             background: rgba(159, 47, 47, 0.08);
         }
+        details {
+            border-top: 1px solid var(--line);
+            padding-top: 12px;
+        }
+        summary {
+            cursor: pointer;
+            color: var(--text);
+            font-weight: 700;
+        }
         @media (max-width: 720px) {
             .card__body {
                 padding: 24px;
@@ -372,6 +381,11 @@ export const renderSettingsPage = ({
         authMode: 'x-api-key',
         mockMode: true,
     };
+    const currentAuthModeLabel = shipday.authMode === 'basic' ? 'Basic' : 'x-api-key';
+    const currentModeLabel = shipday.mockMode ? 'Mock mode' : 'Live mode';
+    const defaultSpotLabel = defaultSpotOptions.find(option => String(option.value) === String(
+        publicSettings && publicSettings.defaultSpotId ? publicSettings.defaultSpotId : '',
+    ));
     const noticeMarkup = notices.map(notice => `
         <div class="notice notice--${escapeHtml(notice.kind || 'success')}">
             ${escapeHtml(notice.message)}
@@ -451,22 +465,23 @@ export const renderSettingsPage = ({
                     <p class="mono">${escapeHtml(account)}</p>
                 </div>
                 <div class="panel">
-                    <p><strong>Poster token</strong></p>
-                    <p class="mono">${escapeHtml(installation && installation.accessToken ? installation.accessToken : 'Немає')}</p>
+                    <p><strong>Poster OAuth</strong></p>
+                    <p class="mono">${installation && installation.accessToken ? 'Підключено' : 'Не підключено'}</p>
                 </div>
                 <div class="panel">
-                    <p><strong>Shipday API key</strong></p>
-                    <p class="mono">${shipday.apiKeyConfigured ? escapeHtml(shipday.apiKeyMasked || 'Збережено') : 'Ще не збережено'}</p>
+                    <p><strong>Shipday</strong></p>
+                    <p class="mono">${shipday.apiKeyConfigured ? `${escapeHtml(shipday.apiKeyMasked || 'Збережено')} · ${escapeHtml(currentAuthModeLabel)} · ${escapeHtml(currentModeLabel)}` : 'Ще не налаштовано'}</p>
                 </div>
                 <div class="panel">
-                    <p><strong>Poster spots</strong></p>
-                    <p class="mono">${posterSpots.length ? String(posterSpots.length) : '0'}</p>
+                    <p><strong>Pickup spot</strong></p>
+                    <p class="mono">${defaultSpotLabel && defaultSpotLabel.value ? escapeHtml(defaultSpotLabel.label) : 'Ще не вибрано'}</p>
                 </div>
             </div>
             <form class="grid" method="post" action="${escapeHtml(settingsActionUrl)}">
                 <input type="hidden" name="account" value="${escapeHtml(account)}">
                 <section class="panel grid">
-                    <h2>Shipday доступ</h2>
+                    <h2>Що потрібно налаштувати</h2>
+                    <p>Для роботи інтеграції потрібні тільки Shipday API key, спосіб авторизації і точка Poster за замовчуванням. Адресу точки backend бере з Poster автоматично.</p>
                     <div class="form-grid">
                         ${renderTextInput({
                             name: 'shipday[apiKey]',
@@ -483,9 +498,17 @@ export const renderSettingsPage = ({
                             label: 'Auth mode',
                             value: shipday.authMode || 'x-api-key',
                             options: [
-                                { value: 'x-api-key', label: 'x-api-key' },
                                 { value: 'basic', label: 'Basic' },
+                                { value: 'x-api-key', label: 'x-api-key' },
                             ],
+                            helper: 'Для Shipday спочатку перевіряй Basic. Якщо акаунт вимагає інший режим, перемкнеш назад.',
+                        })}
+                        ${renderSelect({
+                            name: 'defaultSpotId',
+                            label: 'Точка Poster за замовчуванням',
+                            value: publicSettings && publicSettings.defaultSpotId ? publicSettings.defaultSpotId : '',
+                            options: defaultSpotOptions,
+                            helper: 'Ця точка використається як fallback, якщо POS не передасть spotId у замовленні.',
                         })}
                     </div>
                     <div>
@@ -496,28 +519,20 @@ export const renderSettingsPage = ({
                             helper: 'У mock mode замовлення не йдуть у реальний Shipday API. Це зручно для першого тесту.',
                         })}
                     </div>
-                </section>
-
-                <section class="panel grid">
-                    <div class="actions">
-                        <h2>Точки Poster і pickup mapping</h2>
-                    </div>
-                    <p>Backend підтягне точки з Poster OAuth і використовуватиме їх як pickup-джерело. Якщо в замовленні не вдасться визначити точку автоматично, спрацює точка за замовчуванням.</p>
-                    <div class="form-grid">
-                        ${renderSelect({
-                            name: 'defaultSpotId',
-                            label: 'Точка за замовчуванням',
-                            value: publicSettings && publicSettings.defaultSpotId ? publicSettings.defaultSpotId : '',
-                            options: defaultSpotOptions,
-                            helper: 'Потрібно як fallback, якщо POS payload не віддасть spotId.',
-                        })}
-                    </div>
                     <div class="actions">
                         <a class="button button--ghost" href="${escapeHtml(syncSpotsUrl)}">Синхронізувати точки Poster</a>
                     </div>
-                    <div class="spot-list">
-                        ${spotCards}
-                    </div>
+                </section>
+
+                <section class="panel grid">
+                    <h2>Pickup mapping</h2>
+                    <p>У більшості випадків додатково нічого не треба. Якщо точка в Poster вже має правильну адресу, інтеграція візьме її автоматично. Розгорни блок нижче тільки якщо треба override для конкретної точки.</p>
+                    <details>
+                        <summary>Додаткові override для точок</summary>
+                        <div class="spot-list" style="margin-top:16px;">
+                            ${spotCards}
+                        </div>
+                    </details>
                 </section>
 
                 <div class="actions">

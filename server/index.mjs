@@ -306,7 +306,7 @@ export const createApp = () => {
             },
             shipday: {
                 configured: accountSettings.some(settings => settings.shipday && settings.shipday.apiKeyConfigured),
-                mockMode: config.shipday.mockMode,
+                globalFallbackMockMode: config.shipday.mockMode,
                 apiBaseUrl: config.shipday.apiBaseUrl,
                 authMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
