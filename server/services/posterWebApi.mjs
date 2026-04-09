@@ -50,6 +50,16 @@ const toArray = (value) => {
     return [];
 };
 
+const normalizeFloat = (value) => {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+
+    const parsed = Number.parseFloat(String(value));
+
+    return Number.isFinite(parsed) ? parsed : null;
+};
+
 const normalizePosterSpot = (spot) => {
     const spotId = String(spot && (spot.spot_id || spot.spotId || spot.id) || '').trim();
 
@@ -68,6 +78,8 @@ const normalizePosterSpot = (spot) => {
         name,
         address,
         phone,
+        lat: normalizeFloat(spot && spot.lat),
+        lng: normalizeFloat(spot && spot.lng),
         raw: spot,
     };
 };

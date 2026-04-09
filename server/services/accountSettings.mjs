@@ -43,6 +43,18 @@ const normalizePosterSpot = (spot) => {
         name: normalizeText(spot && (spot.name || spot.spot_name || spot.spotName || `Spot #${spotId}`)),
         address: normalizeText(spot && spot.address),
         phone: normalizeText(spot && spot.phone),
+        lat: normalizeFloat(
+            spot && (
+                spot.lat
+                || (spot.raw && spot.raw.lat)
+            ),
+        ),
+        lng: normalizeFloat(
+            spot && (
+                spot.lng
+                || (spot.raw && spot.raw.lng)
+            ),
+        ),
         raw: spot && spot.raw ? spot.raw : null,
     };
 };
@@ -117,6 +129,8 @@ const mergePickupWithPosterSpot = ({
             address: posterSpot.address,
             formattedAddress: posterSpot.address,
             phone: posterSpot.phone,
+            lat: posterSpot.lat,
+            lng: posterSpot.lng,
         }
         : {};
     const mergedPickup = normalizePickup({
