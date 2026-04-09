@@ -287,6 +287,9 @@ export const createApp = () => {
         const accountSummaries = accountSettings.map(settings => ({
             account: settings.account,
             shipdayConfigured: Boolean(settings.shipday && settings.shipday.apiKeyConfigured),
+            authMode: settings.shipday && settings.shipday.authMode
+                ? settings.shipday.authMode
+                : config.shipday.authMode,
             mockMode: Boolean(settings.shipday && settings.shipday.mockMode),
             defaultSpotId: settings.defaultSpotId || '',
             spotsCount: Array.isArray(settings.posterSpots) ? settings.posterSpots.length : 0,
@@ -308,7 +311,7 @@ export const createApp = () => {
                 configured: accountSettings.some(settings => settings.shipday && settings.shipday.apiKeyConfigured),
                 globalFallbackMockMode: config.shipday.mockMode,
                 apiBaseUrl: config.shipday.apiBaseUrl,
-                authMode: config.shipday.authMode,
+                globalFallbackAuthMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
                 fallbackConfigured: Boolean(config.shipday.apiKey),
                 accounts: accountSummaries,
