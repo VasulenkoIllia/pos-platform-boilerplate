@@ -152,7 +152,7 @@ export const normalizeAccountSettingsRecord = (account, record, secret) => {
             apiKey,
             apiKeyMasked: maskSecret(apiKey),
             apiKeyConfigured: Boolean(apiKey),
-            authMode: normalizeText(record && record.shipday && record.shipday.authMode) || 'x-api-key',
+            authMode: normalizeText(record && record.shipday && record.shipday.authMode) || 'basic',
             mockMode: Boolean(record && record.shipday && record.shipday.mockMode),
         },
     };
@@ -178,7 +178,7 @@ export const serializeAccountSettingsRecord = (record, secret) => ({
     }, {}),
     shipday: {
         apiKeyEncrypted: encryptSecret(record.shipday && record.shipday.apiKey, secret),
-        authMode: normalizeText(record.shipday && record.shipday.authMode) || 'x-api-key',
+        authMode: normalizeText(record.shipday && record.shipday.authMode) || 'basic',
         mockMode: Boolean(record.shipday && record.shipday.mockMode),
     },
 });

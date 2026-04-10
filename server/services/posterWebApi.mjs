@@ -103,6 +103,56 @@ const extractSpots = (payload) => {
     return [];
 };
 
+const normalizePosterTransaction = (transaction) => {
+    if (!transaction || typeof transaction !== 'object') {
+        return null;
+    }
+
+    const transactionId = String(
+        transaction.transaction_id
+        || transaction.transactionId
+        || transaction.id
+        || '',
+    ).trim();
+
+    if (!transactionId) {
+        return null;
+    }
+
+    return {
+        transactionId,
+        spotId: String(transaction.spot_id || transaction.spotId || '').trim(),
+        clientId: String(transaction.client_id || transaction.clientId || '').trim(),
+        clientPhone: String(transaction.client_phone || transaction.clientPhone || '').trim(),
+        deliveryAddress: [
+            transaction.delivery && transaction.delivery.city,
+            transaction.delivery && transaction.delivery.address1,
+            transaction.delivery && transaction.delivery.address2,
+        ].filter(Boolean).join(', ').trim(),
+        sum: String(transaction.sum || '').trim(),
+        raw: transaction,
+    };
+};
+
+const extractTransaction = (payload) => {
+    const root = payload && (payload.response || payload.data || payload.result || payload);
+    const candidates = [
+        Array.isArray(root) ? root[0] : root,
+        root && Array.isArray(root.data) ? root.data[0] : null,
+        root && root.transaction,
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+        const normalizedTransaction = normalizePosterTransaction(candidate);
+
+        if (normalizedTransaction) {
+            return normalizedTransaction;
+        }
+    }
+
+    return null;
+};
+
 const hasPosterApiError = payload => Boolean(
     payload
     && typeof payload === 'object'
@@ -183,4 +233,66 @@ export const getPosterSpots = async ({
         return `${attempt.endpoint} (${attempt.tokenParamKey}) -> HTTP ${attempt.status}`;
     });
     throw syncError;
+};
+
+export const getPosterTransaction = async ({
+    account,
+    accessToken,
+    apiBaseUrl,
+    timeoutMs,
+    transactionId,
+}) => {
+    const normalizedAccount = String(account || '').trim();
+    const normalizedToken = String(accessToken || '').trim();
+    const normalizedTransactionId = String(transactionId || '').trim();
+
+    if (!normalizedAccount || !normalizedToken || !normalizedTransactionId) {
+        return null;
+    }
+
+    const endpoints = buildEndpointCandidates({
+        account: normalizedAccount,
+        apiBaseUrl,
+        methodName: 'dash.getTransaction',
+    });
+    const tokenParamKeys = ['token', 'access_token'];
+
+    for (const endpoint of endpoints) {
+        for (const tokenParamKey of tokenParamKeys) {
+            const url = new URL(endpoint);
+            url.searchParams.set(tokenParamKey, normalizedToken);
+            url.searchParams.set('transaction_id', normalizedTransactionId);
+            url.searchParams.set('include_delivery', 'true');
+
+            try {
+                const response = await withTimeout(signal => fetch(url.toString(), {
+                    method: 'GET',
+                    signal,
+                    headers: {
+                        Accept: 'application/json',
+                    },
+                }), timeoutMs);
+                const body = await parseJsonResponse(response);
+
+                if (!response.ok || hasPosterApiError(body)) {
+                    continue;
+                }
+
+                const transaction = extractTransaction(body);
+
+                if (transaction) {
+                    return {
+                        endpoint,
+                        tokenParamKey,
+                        transaction,
+                        raw: body,
+                    };
+                }
+            } catch (error) {
+                continue;
+            }
+        }
+    }
+
+    return null;
 };

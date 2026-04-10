@@ -3,11 +3,11 @@ const normalizeText = value => String(value || '').trim();
 const normalizeAuthMode = (value) => {
     const normalizedValue = normalizeText(value).toLowerCase();
 
-    if (normalizedValue === 'basic') {
-        return 'basic';
+    if (normalizedValue === 'x-api-key' || normalizedValue === 'x_api_key') {
+        return 'x-api-key';
     }
 
-    return 'x-api-key';
+    return 'basic';
 };
 
 const normalizeFloat = (value) => {
@@ -160,7 +160,10 @@ export const resolveShipdayAccountConfig = ({
     const shipdaySettings = settings && settings.shipday ? settings.shipday : {};
     const apiKey = normalizeText(shipdaySettings.apiKey) || normalizeText(globalShipdayConfig.apiKey);
     const authMode = normalizeAuthMode(shipdaySettings.authMode || globalShipdayConfig.authMode);
-    const mockMode = Boolean(shipdaySettings.mockMode) || !apiKey;
+    const isExplicitMockMode = settings
+        ? Boolean(shipdaySettings.mockMode)
+        : Boolean(globalShipdayConfig.mockMode);
+    const mockMode = isExplicitMockMode || !apiKey;
     const posterSpotMap = buildPosterSpotMap(settings && settings.posterSpots);
     const pickupMappings = settings && settings.pickupMappings ? settings.pickupMappings : {};
     const explicitSpotId = normalizeSpotId(
@@ -186,6 +189,7 @@ export const resolveShipdayAccountConfig = ({
         apiKey,
         authMode,
         mockMode,
+        isExplicitMockMode,
         pickup,
         posterSpot,
         resolvedSpotId,
@@ -211,7 +215,7 @@ export const buildAccountSettingsFromInput = ({
         pickupMappings: {},
         shipday: {
             apiKey: '',
-            authMode: 'x-api-key',
+            authMode: 'basic',
             mockMode: true,
         },
         defaultSpotId: '',

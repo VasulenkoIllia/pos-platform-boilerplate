@@ -44,4 +44,29 @@ export const ensureStorageTables = async (pool) => {
             shipday JSONB NOT NULL DEFAULT '{}'::jsonb
         );
     `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS order_log (
+            id BIGSERIAL PRIMARY KEY,
+            account TEXT NOT NULL,
+            order_number TEXT NOT NULL,
+            shipday_order_id TEXT,
+            spot_id TEXT,
+            customer_phone TEXT,
+            mock_mode BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    `);
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS order_log_order_number_idx ON order_log (order_number);
+    `);
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS order_log_account_idx ON order_log (account);
+    `);
+
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS order_log_shipday_order_id_idx ON order_log (shipday_order_id);
+    `);
 };

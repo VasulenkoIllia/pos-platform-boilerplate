@@ -5,6 +5,8 @@ const INITIAL_DATA = {
     installations: {},
 };
 
+const normalizeAccount = value => String(value || '').trim();
+
 const cloneInitialData = () => JSON.parse(JSON.stringify(INITIAL_DATA));
 
 export const createInstallationsStore = (filePath) => {
@@ -46,9 +48,15 @@ export const createInstallationsStore = (filePath) => {
 
     return {
         async get(account) {
+            const key = normalizeAccount(account);
+
+            if (!key) {
+                return null;
+            }
+
             const data = await readData();
 
-            return data.installations[account] || null;
+            return data.installations[key] || null;
         },
         async list() {
             const data = await readData();
@@ -56,11 +64,17 @@ export const createInstallationsStore = (filePath) => {
             return Object.values(data.installations);
         },
         async save(record) {
+            const key = normalizeAccount(record && record.account);
+
+            if (!key) {
+                throw new Error('Installation потребує account.');
+            }
+
             const data = await readData();
-            data.installations[record.account] = record;
+            data.installations[key] = { ...record, account: key };
             await writeData(data);
 
-            return record;
+            return data.installations[key];
         },
     };
 };

@@ -58,6 +58,52 @@ const extractPosterAccountFromUrl = (value) => {
     }
 };
 
+const extractPosterAccountFromTitle = (value) => {
+    const title = String(value || '').trim();
+
+    if (!title) {
+        return '';
+    }
+
+    const patterns = [
+        /Poster\s*[-–]\s*([A-Za-z0-9._-]+)/i,
+        /^([A-Za-z0-9._-]+)\s*[-–]\s*Poster/i,
+    ];
+
+    for (const pattern of patterns) {
+        const match = title.match(pattern);
+
+        if (match && match[1]) {
+            return String(match[1]).trim();
+        }
+    }
+
+    return '';
+};
+
+const extractOrderNumberFromText = (value) => {
+    const text = String(value || '').trim();
+
+    if (!text) {
+        return '';
+    }
+
+    const patterns = [
+        /(?:Чек|Check)\s*№\s*([0-9]+)/i,
+        /(?:Order)\s*#\s*([0-9]+)/i,
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+
+        if (match && match[1]) {
+            return String(match[1]).trim();
+        }
+    }
+
+    return '';
+};
+
 export const getPosterMode = () => {
     const poster = getPoster();
 
@@ -156,8 +202,61 @@ export const getPosterAccountHint = () => {
 
     candidates.push(...ancestorOrigins);
 
+    try {
+        if (window.parent && window.parent !== window && window.parent.location) {
+            candidates.push(window.parent.location.href);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    try {
+        if (window.top && window.top !== window && window.top.location) {
+            candidates.push(window.top.location.href);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
     for (const candidate of candidates) {
         const account = extractPosterAccountFromUrl(candidate);
+
+        if (account) {
+            return account;
+        }
+    }
+
+    const titleCandidates = [
+        document.title,
+        window.name,
+    ];
+
+    try {
+        if (window.parent && window.parent !== window) {
+            titleCandidates.push(window.parent.name);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    try {
+        if (window.top && window.top !== window && window.top.document) {
+            titleCandidates.push(window.top.document.title);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    try {
+        if (window.top && window.top !== window) {
+            titleCandidates.push(window.top.name);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    for (const candidate of titleCandidates) {
+        const account = extractPosterAccountFromTitle(candidate);
 
         if (account) {
             return account;
@@ -169,6 +268,45 @@ export const getPosterAccountHint = () => {
     return poster && poster.mockRuntime && poster.mockAccount
         ? poster.mockAccount
         : '';
+};
+
+export const getPosterOrderNumberHint = () => {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+
+    const candidates = [
+        document.title,
+        window.name,
+        document.body ? document.body.innerText : '',
+    ];
+
+    try {
+        if (window.parent && window.parent !== window) {
+            candidates.push(window.parent.name);
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    try {
+        if (window.top && window.top !== window && window.top.document) {
+            candidates.push(window.top.document.title);
+            candidates.push(window.top.document.body ? window.top.document.body.innerText : '');
+        }
+    } catch (error) {
+        // Ignore cross-origin access errors in real Poster container.
+    }
+
+    for (const candidate of candidates) {
+        const orderNumber = extractOrderNumberFromText(candidate);
+
+        if (orderNumber) {
+            return orderNumber;
+        }
+    }
+
+    return '';
 };
 
 export const subscribeToPosterEvent = (eventName, handler) => {

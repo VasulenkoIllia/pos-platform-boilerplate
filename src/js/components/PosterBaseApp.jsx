@@ -8,6 +8,7 @@ import {
     getPosterDebugState,
     getPosterEnvironment,
     getPosterMode,
+    getPosterOrderNumberHint,
     getPosterProductFullName,
     getRuntimeLabel,
     isPosterAvailable,
@@ -64,6 +65,30 @@ const getOrderId = (order) => {
     }
 
     return order.id || order.orderId || null;
+};
+
+const getOrderNumber = (order) => {
+    if (!order) {
+        return null;
+    }
+
+    const candidate = (
+        order.orderName
+        || order.order_name
+        || order.orderNumber
+        || order.order_number
+        || order.number
+        || null
+    );
+    const normalizedCandidate = String(candidate || '').trim();
+
+    if (normalizedCandidate) {
+        return normalizedCandidate;
+    }
+
+    const runtimeOrderNumber = String(getPosterOrderNumberHint() || '').trim();
+
+    return runtimeOrderNumber || null;
 };
 
 const buildClientName = (client) => {
@@ -296,7 +321,7 @@ const findShipdayItems = (order) => {
 };
 
 const buildShipdayDraft = (order) => {
-    const draftOrderNumber = getOrderId(order) || `MANUAL-${Date.now()}`;
+    const draftOrderNumber = getOrderNumber(order) || getOrderId(order) || `MANUAL-${Date.now()}`;
 
     return {
         orderNumber: String(draftOrderNumber),
@@ -350,8 +375,11 @@ const buildShipdayRequest = ({
     order,
     account,
 }) => {
+    const posterOrderId = getOrderId(order);
+    const posterTransactionId = getOrderNumber(order) || String(draft.orderNumber || '').trim();
     const posterContext = {
-        orderId: getOrderId(order) || String(draft.orderNumber || '').trim(),
+        orderId: posterOrderId || '',
+        transactionId: posterTransactionId || '',
         serviceMode: order && order.serviceMode ? order.serviceMode : '',
         spotId: getPosterSpotId(order),
         spotName: getPosterSpotName(order),

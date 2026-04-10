@@ -55,6 +55,21 @@ const renderCheckbox = ({
     ${helper ? `<small class="checkbox-helper">${escapeHtml(helper)}</small>` : ''}
 `;
 
+// Дозволяємо лише http: та https: щоб заблокувати javascript: і data: URI
+const isSafeUrl = (url) => {
+    if (!url) {
+        return false;
+    }
+
+    try {
+        const { protocol } = new URL(url);
+
+        return protocol === 'http:' || protocol === 'https:';
+    } catch {
+        return false;
+    }
+};
+
 const renderLayout = ({
     title,
     eyebrow,
@@ -309,7 +324,7 @@ const renderLayout = ({
             }
         }
     </style>
-    ${autoRedirectUrl ? `<meta http-equiv="refresh" content="${Math.max(1, Math.ceil(autoRedirectDelayMs / 1000))};url=${escapeHtml(autoRedirectUrl)}">` : ''}
+    ${isSafeUrl(autoRedirectUrl) ? `<meta http-equiv="refresh" content="${Math.max(1, Math.ceil(autoRedirectDelayMs / 1000))};url=${escapeHtml(autoRedirectUrl)}">` : ''}
 </head>
 <body>
     <main class="card">
@@ -378,7 +393,7 @@ export const renderSettingsPage = ({
     const shipday = publicSettings && publicSettings.shipday ? publicSettings.shipday : {
         apiKeyConfigured: false,
         apiKeyMasked: '',
-        authMode: 'x-api-key',
+        authMode: 'basic',
         mockMode: true,
     };
     const currentAuthModeLabel = shipday.authMode === 'basic' ? 'Basic' : 'x-api-key';
@@ -496,7 +511,7 @@ export const renderSettingsPage = ({
                         ${renderSelect({
                             name: 'shipday[authMode]',
                             label: 'Auth mode',
-                            value: shipday.authMode || 'x-api-key',
+                            value: shipday.authMode || 'basic',
                             options: [
                                 { value: 'basic', label: 'Basic' },
                                 { value: 'x-api-key', label: 'x-api-key' },

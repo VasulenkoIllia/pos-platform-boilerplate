@@ -41,7 +41,11 @@ https://poster-shipday-bridge.onrender.com
 - `BACKEND_PUBLIC_URL`
 - `POSTER_APPLICATION_ID`
 - `POSTER_APPLICATION_SECRET`
-- `SETTINGS_ENCRYPTION_SECRET`
+- `SETTINGS_ENCRYPTION_SECRET` — окремий секрет для шифрування Shipday API ключів. Не використовуй те саме значення що і `POSTER_APPLICATION_SECRET`. Не змінюй після першого запуску — інакше збережені ключі стануть нечитабельними.
+
+## Опціональні env
+
+- `SHIPDAY_WEBHOOK_TOKEN` — токен для верифікації вхідних Shipday webhook-ів. Встановлюється в Shipday Dashboard → Integrations → Webhook (max 32 символи). Якщо не задано — верифікація пропускається.
 
 ## Postgres
 
@@ -100,6 +104,7 @@ npm run deploy
 - `GET /api/poster/settings/:account`
 - `POST /api/shipday/orders`
 - `GET /api/shipday/orders/:orderNumber`
+- `POST /webhooks/shipday` — Shipday webhook (вказати в Shipday Dashboard)
 
 ## Що налаштовує клієнт після install
 

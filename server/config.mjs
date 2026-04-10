@@ -62,18 +62,54 @@ const config = {
         tokenExchangeTimeoutMs: parseInteger(process.env.POSTER_AUTH_TIMEOUT_MS, 15000),
     },
     security: {
-        settingsSecret: String(
-            process.env.SETTINGS_ENCRYPTION_SECRET
-            || process.env.POSTER_APPLICATION_SECRET
-            || 'poster-shipday-bridge-dev-secret',
-        ).trim(),
+        settingsSecret: (() => {
+            if (process.env.SETTINGS_ENCRYPTION_SECRET) {
+                return String(process.env.SETTINGS_ENCRYPTION_SECRET).trim();
+            }
+
+            const isProd = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+            if (process.env.POSTER_APPLICATION_SECRET) {
+                if (isProd) {
+                    console.error(
+                        '[config] FATAL: SETTINGS_ENCRYPTION_SECRET не встановлено у production. ' +
+                        'Встановіть окремий SETTINGS_ENCRYPTION_SECRET і перезапустіть сервіс.',
+                    );
+                    process.exit(1);
+                }
+
+                console.warn(
+                    '[config] SETTINGS_ENCRYPTION_SECRET не встановлено — ' +
+                    'використовується резервний ключ. ' +
+                    'Встановіть SETTINGS_ENCRYPTION_SECRET перед деплоєм у production.',
+                );
+
+                return String(process.env.POSTER_APPLICATION_SECRET).trim();
+            }
+
+            if (isProd) {
+                console.error(
+                    '[config] FATAL: SETTINGS_ENCRYPTION_SECRET не встановлено у production. ' +
+                    'Зупиняю сервер.',
+                );
+                process.exit(1);
+            }
+
+            console.warn(
+                '[config] SETTINGS_ENCRYPTION_SECRET не встановлено — ' +
+                'використовується небезпечний дефолтний ключ шифрування. ' +
+                'НЕ використовуйте це у production!',
+            );
+
+            return 'poster-shipday-bridge-dev-secret';
+        })(),
     },
     shipday: {
         apiBaseUrl: normalizeBaseUrl(process.env.SHIPDAY_API_BASE_URL || 'https://api.shipday.com'),
         apiKey: String(process.env.SHIPDAY_API_KEY || '').trim(),
-        authMode: String(process.env.SHIPDAY_AUTH_MODE || 'x-api-key').trim(),
-        mockMode: String(process.env.SHIPDAY_MOCK_MODE || '').trim() === 'true'
-            || !String(process.env.SHIPDAY_API_KEY || '').trim(),
+        authMode: String(process.env.SHIPDAY_AUTH_MODE || 'basic').trim(),
+        mockMode: String(process.env.SHIPDAY_MOCK_MODE || '').trim() === 'true',
+        webhookToken: String(process.env.SHIPDAY_WEBHOOK_TOKEN || '').trim(),
         timeoutMs: parseInteger(process.env.SHIPDAY_TIMEOUT_MS, 15000),
         defaultPickup: {
             name: String(process.env.SHIPDAY_PICKUP_NAME || '').trim(),
@@ -105,6 +141,7 @@ config.urls = {
     connectSuccess: toUrl(config.backendPublicUrl, config.poster.successPath),
     health: toUrl(config.backendPublicUrl, '/health'),
     shipdayOrders: toUrl(config.backendPublicUrl, '/api/shipday/orders'),
+    shipdayWebhook: toUrl(config.backendPublicUrl, '/webhooks/shipday'),
 };
 
 export const getMissingPosterAuthConfig = () => {

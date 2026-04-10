@@ -1,5 +1,6 @@
 import 'dotenv/config';
 
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +30,7 @@ import {
     exchangePosterAuthCode,
     toInstallationRecord,
 } from './services/posterAuth.mjs';
-import { getPosterSpots } from './services/posterWebApi.mjs';
+import { getPosterSpots, getPosterTransaction } from './services/posterWebApi.mjs';
 import {
     createMockShipdayOrder,
     createShipdayOrder,
@@ -79,7 +80,7 @@ const isAllowedOrigin = (origin) => {
             return true;
         }
 
-        if (isLocalHostname(hostname)) {
+        if (isLocalHostname(hostname) && config.nodeEnv !== 'production') {
             return protocol === 'http:' || protocol === 'https:';
         }
 
@@ -106,6 +107,30 @@ const maskToken = (token) => {
 };
 
 const normalizeAccount = value => String(value || '').trim();
+const normalizeText = value => String(value || '').trim();
+const normalizeComparableText = value => normalizeText(value).toLowerCase().replace(/\s+/g, ' ');
+const normalizePhone = value => String(value || '').replace(/[^\d+]/g, '');
+
+const getPosterBodyHints = (request) => {
+    if (!request.body || typeof request.body !== 'object') {
+        return [];
+    }
+
+    const poster = request.body.poster && typeof request.body.poster === 'object'
+        ? request.body.poster
+        : {};
+
+    return [
+        request.body.account,
+        request.query.account,
+        request.params.account,
+        request.get('x-poster-account-hint'),
+        poster.account,
+        poster.accountHint,
+    ]
+        .map(normalizeAccount)
+        .filter(Boolean);
+};
 
 const toPublicInstallation = installation => ({
     account: installation.account,
@@ -171,14 +196,123 @@ const buildSettingsNotices = (request) => {
     return notices;
 };
 
-const resolveRequestAccount = async (request) => {
-    const explicitAccount = normalizeAccount(
-        request.body && typeof request.body === 'object'
-            ? request.body.account
-            : request.query.account,
-    ) || normalizeAccount(request.params.account);
+const extractRequestOrderLookupHints = (request) => {
+    if (!request.body || typeof request.body !== 'object') {
+        return {
+            transactionId: '',
+            customerPhone: '',
+            deliveryAddress: '',
+        };
+    }
 
-    if (explicitAccount) {
+    const poster = request.body.poster && typeof request.body.poster === 'object'
+        ? request.body.poster
+        : {};
+    const payload = request.body.payload && typeof request.body.payload === 'object'
+        ? request.body.payload
+        : {};
+
+    return {
+        transactionId: normalizeText(
+            poster.transactionId
+            || poster.orderId,
+        ),
+        customerPhone: normalizePhone(
+            payload.customerPhoneNumber
+            || payload.customerPhone,
+        ),
+        deliveryAddress: normalizeComparableText(
+            payload.customerAddress
+            || payload.deliveryAddress,
+        ),
+    };
+};
+
+const getPosterOrderCandidateScore = ({
+    hints,
+    transaction,
+}) => {
+    let score = 0;
+
+    if (hints.customerPhone && normalizePhone(transaction.clientPhone) === hints.customerPhone) {
+        score += 2;
+    }
+
+    if (
+        hints.deliveryAddress
+        && normalizeComparableText(transaction.deliveryAddress) === hints.deliveryAddress
+    ) {
+        score += 2;
+    }
+
+    return score;
+};
+
+const resolveRequestAccountByPosterOrder = async ({
+    request,
+    installations,
+}) => {
+    const hints = extractRequestOrderLookupHints(request);
+
+    if (!hints.transactionId || !Array.isArray(installations) || !installations.length) {
+        return '';
+    }
+
+    const candidates = [];
+
+    for (const installation of installations) {
+        try {
+            const result = await getPosterTransaction({
+                account: installation.account,
+                accessToken: installation.accessToken,
+                apiBaseUrl: config.poster.apiBaseUrl,
+                timeoutMs: config.poster.apiTimeoutMs,
+                transactionId: hints.transactionId,
+            });
+
+            if (result && result.transaction) {
+                candidates.push({
+                    account: installation.account,
+                    transaction: result.transaction,
+                    score: getPosterOrderCandidateScore({
+                        hints,
+                        transaction: result.transaction,
+                    }),
+                });
+            }
+        } catch (error) {
+            console.warn(
+                `[resolveRequestAccount] Не вдалося перевірити transaction_id "${hints.transactionId}" ` +
+                `для account "${installation.account}": ${error.message}`,
+            );
+        }
+    }
+
+    if (!candidates.length) {
+        return '';
+    }
+
+    if (candidates.length === 1) {
+        return candidates[0].account;
+    }
+
+    const highestScore = Math.max(...candidates.map(candidate => candidate.score));
+
+    if (highestScore <= 0) {
+        return '';
+    }
+
+    const strongestCandidates = candidates.filter(candidate => candidate.score === highestScore);
+
+    return strongestCandidates.length === 1
+        ? strongestCandidates[0].account
+        : '';
+};
+
+const resolveRequestAccount = async (request) => {
+    const explicitHints = Array.from(new Set(getPosterBodyHints(request)));
+
+    for (const explicitAccount of explicitHints) {
         const [installation, settings] = await Promise.all([
             installationsStore.get(explicitAccount),
             accountSettingsStore.get(explicitAccount),
@@ -187,10 +321,12 @@ const resolveRequestAccount = async (request) => {
         if (installation || settings) {
             return explicitAccount;
         }
+    }
 
+    if (explicitHints.length) {
         console.warn(
-            `[resolveRequestAccount] Account hint "${explicitAccount}" не знайдено в БД. ` +
-            'Перевіряємо кількість інсталяцій для fallback.',
+            `[resolveRequestAccount] Account hints "${explicitHints.join(', ')}" не знайдені в БД. ` +
+            'Перевіряємо заголовки та fallback.',
         );
     }
 
@@ -214,20 +350,38 @@ const resolveRequestAccount = async (request) => {
 
     const installations = await installationsStore.list();
 
+    if (installations.length > 1) {
+        const accountFromPosterOrder = await resolveRequestAccountByPosterOrder({
+            request,
+            installations,
+        });
+
+        if (accountFromPosterOrder) {
+            if (explicitHints.length) {
+                console.warn(
+                    `[resolveRequestAccount] Використовуємо account "${accountFromPosterOrder}" ` +
+                    'через lookup по transaction_id замовлення.',
+                );
+            }
+
+            return accountFromPosterOrder;
+        }
+    }
+
     if (installations.length === 1) {
-        if (explicitAccount) {
+        if (explicitHints.length) {
             console.warn(
                 `[resolveRequestAccount] Fallback: використовуємо єдину інсталяцію "${installations[0].account}" ` +
-                `замість невідомого account hint "${explicitAccount}".`,
+                `замість невідомих account hints "${explicitHints.join(', ')}".`,
             );
         }
 
         return installations[0].account;
     }
 
-    if (installations.length > 1 && explicitAccount) {
+    if (installations.length > 1 && explicitHints.length) {
         console.error(
-            `[resolveRequestAccount] Account hint "${explicitAccount}" не знайдено, ` +
+            `[resolveRequestAccount] Account hints "${explicitHints.join(', ')}" не знайдені, ` +
             `а в БД ${installations.length} інсталяцій — неможливо визначити заклад.`,
         );
     }
@@ -312,6 +466,23 @@ const extractShipdayReference = (shipdayBody) => {
     return String(candidates.find(Boolean) || '').trim();
 };
 
+const extractShipdayOrderId = (shipdayBody) => {
+    if (!shipdayBody || typeof shipdayBody !== 'object') {
+        return '';
+    }
+
+    const candidates = [
+        shipdayBody.orderId,
+        shipdayBody.id,
+        shipdayBody.data && shipdayBody.data.orderId,
+        shipdayBody.data && shipdayBody.data.id,
+        shipdayBody.result && shipdayBody.result.orderId,
+        shipdayBody.result && shipdayBody.result.id,
+    ];
+
+    return String(candidates.find(Boolean) || '').trim();
+};
+
 const isShipdayCreateConfirmed = (shipdayBody) => {
     if (!shipdayBody || typeof shipdayBody !== 'object') {
         return false;
@@ -328,6 +499,21 @@ export const createApp = () => {
     const app = express();
 
     app.disable('x-powered-by');
+
+    // Security headers
+    app.use((request, response, next) => {
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader('X-Frame-Options', 'DENY');
+        response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+        response.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+
+        if (config.nodeEnv === 'production') {
+            response.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+        }
+
+        next();
+    });
+
     app.use(cors({
         origin(origin, callback) {
             if (isAllowedOrigin(origin)) {
@@ -739,6 +925,7 @@ export const createApp = () => {
                 ? true
                 : isShipdayCreateConfirmed(shipdayResponse.body);
             const reference = extractShipdayReference(shipdayResponse.body);
+            const shipdayOrderId = extractShipdayOrderId(shipdayResponse.body);
             const responsePayload = {
                 ok: shipdayResponse.ok && confirmed,
                 account,
@@ -746,6 +933,7 @@ export const createApp = () => {
                 httpStatus: shipdayResponse.status,
                 confirmed,
                 reference: reference || null,
+                shipdayOrderId: shipdayOrderId || null,
                 resolvedConfig: {
                     account,
                     authMode: resolvedShipdayConfig.authMode,
@@ -789,7 +977,7 @@ export const createApp = () => {
                 await orderLogStore.save({
                     account,
                     orderNumber: payload.orderNumber,
-                    shipdayOrderId: reference || null,
+                    shipdayOrderId: shipdayOrderId || null,
                     spotId: resolvedShipdayConfig.resolvedSpotId || null,
                     customerPhone: payload.customerPhoneNumber || null,
                     mockMode: resolvedShipdayConfig.mockMode,
@@ -856,9 +1044,13 @@ export const createApp = () => {
         const expectedToken = config.shipday.webhookToken;
 
         if (expectedToken) {
-            const receivedToken = request.headers['token'] || request.headers['x-shipday-token'];
+            const receivedToken = String(request.headers['token'] || request.headers['x-shipday-token'] || '');
+            const expectedBuf = Buffer.from(expectedToken);
+            const receivedBuf = Buffer.from(receivedToken);
+            const tokenValid = expectedBuf.length === receivedBuf.length
+                && crypto.timingSafeEqual(expectedBuf, receivedBuf);
 
-            if (receivedToken !== expectedToken) {
+            if (!tokenValid) {
                 console.warn('[webhook/shipday] Невірний token у запиті.');
                 response.status(401).json({ ok: false, message: 'Невірний webhook token.' });
                 return;
@@ -868,26 +1060,49 @@ export const createApp = () => {
         const body = request.body;
         const event = body && body.event;
         const orderNumber = body && body.order && body.order.orderNumber;
+        const shipdayOrderId = String(
+            (body && body.order && (
+                body.order.orderId
+                || body.order.id
+            )) || '',
+        ).trim();
 
-        console.log(`[webhook/shipday] Отримано подію: ${event || 'unknown'}, orderNumber: ${orderNumber || 'n/a'}`);
+        console.log(
+            `[webhook/shipday] Отримано подію: ${event || 'unknown'}, ` +
+            `orderNumber: ${orderNumber || 'n/a'}, shipdayOrderId: ${shipdayOrderId || 'n/a'}`,
+        );
 
-        // Знаходимо account по orderNumber з order_log
         let account = null;
 
-        if (orderNumber) {
+        if (shipdayOrderId) {
             try {
-                const logEntry = await orderLogStore.findByOrderNumber(String(orderNumber));
+                const logEntry = await orderLogStore.findByShipdayOrderId(shipdayOrderId);
 
                 if (logEntry) {
                     account = logEntry.account;
                 }
             } catch (lookupError) {
-                console.error('[webhook/shipday] Помилка пошуку order_log:', lookupError.message);
+                console.error('[webhook/shipday] Помилка пошуку order_log по shipdayOrderId:', lookupError.message);
+            }
+        }
+
+        if (!account && orderNumber) {
+            try {
+                const logEntry = await orderLogStore.findUniqueByOrderNumber(String(orderNumber));
+
+                if (logEntry) {
+                    account = logEntry.account;
+                }
+            } catch (lookupError) {
+                console.error('[webhook/shipday] Помилка пошуку order_log по orderNumber:', lookupError.message);
             }
         }
 
         if (!account) {
-            console.warn(`[webhook/shipday] Не вдалося знайти account для orderNumber "${orderNumber}". Ігноруємо.`);
+            console.warn(
+                `[webhook/shipday] Не вдалося безпечно знайти account для ` +
+                `orderNumber "${orderNumber || 'n/a'}" / shipdayOrderId "${shipdayOrderId || 'n/a'}". Ігноруємо.`,
+            );
             // Повертаємо 200 щоб Shipday не повторював запит
             response.status(200).json({ ok: true, message: 'Webhook отримано, account не знайдено — проігноровано.' });
             return;
@@ -941,9 +1156,10 @@ export const createApp = () => {
             return;
         }
 
+        console.error('[server] Unhandled error:', error);
         response.status(500).json({
             ok: false,
-            message: error.message || 'Внутрішня помилка сервера.',
+            message: 'Внутрішня помилка сервера.',
         });
     });
 

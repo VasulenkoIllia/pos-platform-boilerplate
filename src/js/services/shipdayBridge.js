@@ -31,12 +31,21 @@ const readJsonResponse = async (response) => {
 };
 
 const sendOrderToShipday = async (requestPayload) => {
+    const accountHint = String(
+        (requestPayload && requestPayload.account) || '',
+    ).trim();
+    const headers = {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+    };
+
+    if (accountHint) {
+        headers['X-Poster-Account-Hint'] = accountHint;
+    }
+
     const response = await fetch(buildEndpoint('/api/shipday/orders'), {
         method: 'POST',
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(requestPayload),
     });
     const body = await readJsonResponse(response);
