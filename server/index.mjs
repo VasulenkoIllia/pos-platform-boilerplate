@@ -484,6 +484,42 @@ const resolveRequestAccountByPosterOrder = async ({
         : '';
 };
 
+const resolvePosterTransactionForAccount = async ({
+    request,
+    account,
+}) => {
+    const normalizedAccount = normalizeAccount(account);
+    const hints = extractRequestOrderLookupHints(request);
+
+    if (!normalizedAccount || !hints.transactionId) {
+        return null;
+    }
+
+    const installation = await installationsStore.get(normalizedAccount);
+
+    if (!installation) {
+        return null;
+    }
+
+    try {
+        const result = await getPosterTransaction({
+            account: installation.account,
+            accessToken: installation.accessToken,
+            apiBaseUrl: config.poster.apiBaseUrl,
+            timeoutMs: config.poster.apiTimeoutMs,
+            transactionId: hints.transactionId,
+        });
+
+        return result && result.transaction ? result.transaction : null;
+    } catch (error) {
+        console.warn(
+            `[resolvePosterTransactionForAccount] Не вдалося дотягнути transaction_id "${hints.transactionId}" ` +
+            `для account "${normalizedAccount}": ${error.message}`,
+        );
+        return null;
+    }
+};
+
 const resolveRequestAccount = async (request) => {
     const explicitHints = Array.from(new Set(getPosterBodyHints(request)));
 
@@ -1120,9 +1156,34 @@ export const createApp = () => {
             }
 
             const accountSettings = await accountSettingsStore.get(account);
-            const posterContext = request.body.poster && typeof request.body.poster === 'object'
+            const rawPosterContext = request.body.poster && typeof request.body.poster === 'object'
                 ? request.body.poster
                 : {};
+            const requiresPosterTransactionLookup = !normalizeText(
+                rawPosterContext.spotId
+                || rawPosterContext.spot_id,
+            );
+            const posterTransaction = requiresPosterTransactionLookup
+                ? await resolvePosterTransactionForAccount({
+                    request,
+                    account,
+                })
+                : null;
+            const posterContext = {
+                ...rawPosterContext,
+                transactionId: normalizeText(
+                    rawPosterContext.transactionId
+                    || rawPosterContext.transaction_id
+                    || (posterTransaction && posterTransaction.transactionId)
+                    || '',
+                ),
+                spotId: normalizeText(
+                    rawPosterContext.spotId
+                    || rawPosterContext.spot_id
+                    || (posterTransaction && posterTransaction.spotId)
+                    || '',
+                ),
+            };
             const resolvedShipdayConfig = resolveShipdayAccountConfig({
                 accountSettings,
                 globalShipdayConfig: config.shipday,
@@ -1184,6 +1245,11 @@ export const createApp = () => {
                     mockMode: resolvedShipdayConfig.mockMode,
                     hasConfiguredApiKey: resolvedShipdayConfig.hasConfiguredApiKey,
                     resolvedSpotId: resolvedShipdayConfig.resolvedSpotId || null,
+                },
+                posterContextResolved: {
+                    transactionId: posterContext.transactionId || null,
+                    spotId: posterContext.spotId || null,
+                    transactionLookupUsed: Boolean(posterTransaction),
                 },
                 requestPayload: payload,
                 pickupSource: {

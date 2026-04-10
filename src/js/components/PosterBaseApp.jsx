@@ -68,6 +68,12 @@ const getOrderId = (order) => {
 };
 
 const getOrderNumber = (order) => {
+    const runtimeOrderNumber = String(getPosterOrderNumberHint() || '').trim();
+
+    if (runtimeOrderNumber) {
+        return runtimeOrderNumber;
+    }
+
     if (!order) {
         return null;
     }
@@ -75,13 +81,13 @@ const getOrderNumber = (order) => {
     const candidate = (
         order.orderName
         || order.order_name
-        || order.transactionId
-        || order.transaction_id
         || order.transactionNumber
         || order.transaction_number
         || order.orderNumber
         || order.order_number
         || order.number
+        || order.transactionId
+        || order.transaction_id
         || null
     );
     const normalizedCandidate = String(candidate || '').trim();
@@ -90,9 +96,21 @@ const getOrderNumber = (order) => {
         return normalizedCandidate;
     }
 
-    const runtimeOrderNumber = String(getPosterOrderNumberHint() || '').trim();
+    return null;
+};
 
-    return runtimeOrderNumber || null;
+const getPosterTransactionLookupId = (order) => {
+    if (!order) {
+        return '';
+    }
+
+    return String(
+        order.transactionId
+        || order.transaction_id
+        || order.id
+        || order.orderId
+        || '',
+    ).trim();
 };
 
 const buildClientName = (client) => {
@@ -381,12 +399,9 @@ const buildShipdayRequest = ({
 }) => {
     const posterOrderId = getOrderId(order);
     const posterTransactionId = String(
-        (order && (
-            order.transactionId
-            || order.transaction_id
-            || order.orderName
-            || order.order_name
-        )) || getOrderNumber(order) || String(draft.orderNumber || '').trim(),
+        getPosterTransactionLookupId(order)
+        || getOrderNumber(order)
+        || String(draft.orderNumber || '').trim(),
     ).trim();
     const posterContext = {
         orderId: posterOrderId || '',
