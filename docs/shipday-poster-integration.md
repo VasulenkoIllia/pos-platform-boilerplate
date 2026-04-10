@@ -36,11 +36,11 @@
 - реєструє кнопку `Shipday` у `functions` і `order`
 - бере активне замовлення через Poster POS runtime
 - дотягує повний order, клієнта та назви позицій
-- збирає request до backend
+- збирає request до backend, передаючи і видимий `orderNumber`, і lookup-id для Poster transaction
 - з екрана `order` запускає відправку замовлення
 - з меню `functions` відкриває сервісний екран, а не ручну форму відправки
 - показує fallback popup тільки якщо не вистачає полів
-- показує debug-відповідь від backend/Shipday
+- на будь-якій помилці order-flow відкриває popup з debug-відповіддю від backend/Shipday і переходом у settings
 
 ### 2. Backend
 
@@ -117,10 +117,12 @@ Backend автоматично:
 
 Для `POST /api/shipday/orders` backend використовує не один сигнал, а пріоритетний ланцюжок:
 
-1. lookup через Poster transaction по `transactionId`
-2. account із `Origin/Referer` `*.joinposter.com`
-3. явний `account hint` із POS request як слабкий fallback
-4. єдина installation у backend як останній fallback
+1. lookup через Poster transaction по кількох lookup-кандидатах:
+   `transactionId`, `orderId`, видимий `orderNumber`
+2. визначення акаунта по Poster `spotId` або `spotName`, якщо transaction lookup не спрацював
+3. account із `Origin/Referer` `*.joinposter.com`
+4. явний `account hint` із POS request як слабкий fallback
+5. єдина installation у backend як останній fallback
 
 Це потрібно, щоб multi-tenant backend не відправив замовлення від чужого Poster акаунта через випадковий або підроблений hint.
 
@@ -193,7 +195,8 @@ Backend нормалізує запит у flat-структуру на кшта
 - у кожного акаунта свій Shipday API key
 - у кожного акаунта свій список Poster spots
 - кожне замовлення спочатку намагається взяти `spotId` із POS payload
-- якщо `spotId` не прийшов, backend дотягує Poster transaction по `transactionId` і бере `transaction.spotId`
+- якщо `spotId` не прийшов, backend дотягує Poster transaction по lookup-кандидатах і бере `transaction.spotId`
+- якщо transaction lookup не спрацював, але в POS є `spotName`, backend пробує змепити його на synced Poster spot
 - тільки якщо точку замовлення все одно не вдалося визначити, backend бере `defaultSpotId`
 
 Тобто `Default Poster spot` потрібен тільки як fallback. Якщо Poster може дати точну точку замовлення, вона має пріоритет.

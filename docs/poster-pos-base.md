@@ -62,6 +62,7 @@ npm run deploy
 Поточна продуктова поведінка:
 
 - `Shipday` з `order` = відправка замовлення або fallback popup
+  з debug і переходом у settings, якщо backend повернув помилку
 - `Shipday` з `functions` = сервісний вхід, статус і перехід у web settings
 
 ## Детальна документація

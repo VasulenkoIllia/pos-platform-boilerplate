@@ -115,6 +115,22 @@ const normalizeAccount = value => String(value || '').trim();
 const normalizeText = value => String(value || '').trim();
 const normalizeComparableText = value => normalizeText(value).toLowerCase().replace(/\s+/g, ' ');
 const normalizePhone = value => String(value || '').replace(/[^\d+]/g, '');
+const collectUniqueNormalizedValues = values => Array.from(new Set(
+    (Array.isArray(values) ? values : [values])
+        .map(normalizeText)
+        .filter(Boolean),
+));
+
+const isComparableTextMatch = (leftValue, rightValue) => {
+    const left = normalizeComparableText(leftValue);
+    const right = normalizeComparableText(rightValue);
+
+    if (!left || !right) {
+        return false;
+    }
+
+    return left === right || left.includes(right) || right.includes(left);
+};
 
 const parseCookies = (request) => {
     const header = String(request.headers.cookie || '').trim();
@@ -462,9 +478,11 @@ const buildSettingsNotices = (request) => {
 const extractRequestOrderLookupHints = (request) => {
     if (!request.body || typeof request.body !== 'object') {
         return {
-            transactionId: '',
+            transactionLookupCandidates: [],
             customerPhone: '',
             deliveryAddress: '',
+            spotId: '',
+            spotName: '',
         };
     }
 
@@ -476,10 +494,18 @@ const extractRequestOrderLookupHints = (request) => {
         : {};
 
     return {
-        transactionId: normalizeText(
-            poster.transactionId
-            || poster.orderId,
-        ),
+        transactionLookupCandidates: collectUniqueNormalizedValues([
+            poster.transactionId,
+            poster.transaction_id,
+            poster.orderId,
+            poster.order_id,
+            poster.orderNumber,
+            poster.order_number,
+            poster.transactionNumber,
+            poster.transaction_number,
+            payload.orderNumber,
+            payload.order_number,
+        ]),
         customerPhone: normalizePhone(
             payload.customerPhoneNumber
             || payload.customerPhone,
@@ -487,6 +513,14 @@ const extractRequestOrderLookupHints = (request) => {
         deliveryAddress: normalizeComparableText(
             payload.customerAddress
             || payload.deliveryAddress,
+        ),
+        spotId: normalizeText(
+            poster.spotId
+            || poster.spot_id,
+        ),
+        spotName: normalizeComparableText(
+            poster.spotName
+            || poster.spot_name,
         ),
     };
 };
@@ -511,43 +545,57 @@ const getPosterOrderCandidateScore = ({
     return score;
 };
 
+// Короткий timeout для паралельного lookup — щоб не блокувати POS на 15s * N закладів
+const TRANSACTION_LOOKUP_TIMEOUT_MS = Math.min(config.poster.apiTimeoutMs, 5000);
+
 const resolveRequestAccountByPosterOrder = async ({
     request,
     installations,
 }) => {
     const hints = extractRequestOrderLookupHints(request);
 
-    if (!hints.transactionId || !Array.isArray(installations) || !installations.length) {
+    if (!hints.transactionLookupCandidates.length || !Array.isArray(installations) || !installations.length) {
         return '';
     }
 
     const candidates = [];
 
     for (const installation of installations) {
-        try {
-            const result = await getPosterTransaction({
+        const results = await Promise.allSettled(
+            hints.transactionLookupCandidates.map(lookupCandidate => getPosterTransaction({
                 account: installation.account,
                 accessToken: installation.accessToken,
                 apiBaseUrl: config.poster.apiBaseUrl,
-                timeoutMs: config.poster.apiTimeoutMs,
-                transactionId: hints.transactionId,
-            });
+                timeoutMs: TRANSACTION_LOOKUP_TIMEOUT_MS,
+                transactionId: lookupCandidate,
+            }).then(result => ({
+                lookupCandidate,
+                result,
+            }))),
+        );
+
+        for (const settled of results) {
+            if (settled.status === 'rejected') {
+                console.warn(
+                    `[resolveRequestAccount] transaction lookup помилка: ${settled.reason && settled.reason.message}`,
+                );
+                continue;
+            }
+
+            const { lookupCandidate, result } = settled.value;
 
             if (result && result.transaction) {
                 candidates.push({
                     account: installation.account,
                     transaction: result.transaction,
+                    lookupCandidate,
                     score: getPosterOrderCandidateScore({
                         hints,
                         transaction: result.transaction,
                     }),
                 });
+                break;
             }
-        } catch (error) {
-            console.warn(
-                `[resolveRequestAccount] Не вдалося перевірити transaction_id "${hints.transactionId}" ` +
-                `для account "${installation.account}": ${error.message}`,
-            );
         }
     }
 
@@ -561,15 +609,17 @@ const resolveRequestAccountByPosterOrder = async ({
 
     const highestScore = Math.max(...candidates.map(candidate => candidate.score));
 
-    if (highestScore <= 0) {
-        return '';
+    if (highestScore > 0) {
+        const strongestCandidates = candidates.filter(candidate => candidate.score === highestScore);
+
+        if (strongestCandidates.length === 1) {
+            return strongestCandidates[0].account;
+        }
     }
 
-    const strongestCandidates = candidates.filter(candidate => candidate.score === highestScore);
+    const uniqueAccounts = Array.from(new Set(candidates.map(candidate => candidate.account)));
 
-    return strongestCandidates.length === 1
-        ? strongestCandidates[0].account
-        : '';
+    return uniqueAccounts.length === 1 ? uniqueAccounts[0] : '';
 };
 
 const resolvePosterTransactionForAccount = async ({
@@ -579,7 +629,7 @@ const resolvePosterTransactionForAccount = async ({
     const normalizedAccount = normalizeAccount(account);
     const hints = extractRequestOrderLookupHints(request);
 
-    if (!normalizedAccount || !hints.transactionId) {
+    if (!normalizedAccount || !hints.transactionLookupCandidates.length) {
         return null;
     }
 
@@ -589,23 +639,58 @@ const resolvePosterTransactionForAccount = async ({
         return null;
     }
 
-    try {
-        const result = await getPosterTransaction({
-            account: installation.account,
-            accessToken: installation.accessToken,
-            apiBaseUrl: config.poster.apiBaseUrl,
-            timeoutMs: config.poster.apiTimeoutMs,
-            transactionId: hints.transactionId,
-        });
+    for (const lookupCandidate of hints.transactionLookupCandidates) {
+        try {
+            const result = await getPosterTransaction({
+                account: installation.account,
+                accessToken: installation.accessToken,
+                apiBaseUrl: config.poster.apiBaseUrl,
+                timeoutMs: config.poster.apiTimeoutMs,
+                transactionId: lookupCandidate,
+            });
 
-        return result && result.transaction ? result.transaction : null;
-    } catch (error) {
-        console.warn(
-            `[resolvePosterTransactionForAccount] Не вдалося дотягнути transaction_id "${hints.transactionId}" ` +
-            `для account "${normalizedAccount}": ${error.message}`,
-        );
-        return null;
+            if (result && result.transaction) {
+                return result.transaction;
+            }
+        } catch (error) {
+            console.warn(
+                `[resolvePosterTransactionForAccount] Не вдалося дотягнути lookup "${lookupCandidate}" ` +
+                `для account "${normalizedAccount}": ${error.message}`,
+            );
+        }
     }
+
+    return null;
+};
+
+const resolveRequestAccountByPosterSpot = async (request) => {
+    const hints = extractRequestOrderLookupHints(request);
+
+    if (!hints.spotId && !hints.spotName) {
+        return '';
+    }
+
+    const settingsList = await accountSettingsStore.list();
+    const matchedAccounts = settingsList
+        .filter((settings) => {
+            const posterSpots = Array.isArray(settings.posterSpots) ? settings.posterSpots : [];
+
+            return posterSpots.some((spot) => {
+                const spotId = normalizeText(spot.spotId || spot.spot_id || spot.id);
+                const spotName = normalizeText(spot.name || spot.spot_name || spot.spotName);
+
+                if (hints.spotId && spotId && spotId === hints.spotId) {
+                    return true;
+                }
+
+                return hints.spotName && isComparableTextMatch(spotName, hints.spotName);
+            });
+        })
+        .map(settings => normalizeAccount(settings.account))
+        .filter(Boolean);
+    const uniqueAccounts = Array.from(new Set(matchedAccounts));
+
+    return uniqueAccounts.length === 1 ? uniqueAccounts[0] : '';
 };
 
 const resolveRequestAccount = async (request) => {
@@ -672,6 +757,14 @@ const resolveRequestAccount = async (request) => {
             }
 
             return accountFromPosterOrder;
+        }
+    }
+
+    if (hasMultipleInstallations) {
+        const accountFromPosterSpot = await resolveRequestAccountByPosterSpot(request);
+
+        if (accountFromPosterSpot) {
+            return accountFromPosterSpot;
         }
     }
 
@@ -1292,6 +1385,7 @@ export const createApp = () => {
                     ok: false,
                     message: 'Не вдалося визначити Poster account для відправки в Shipday.',
                     requiresAccountSettings: true,
+                    settingsUrl: config.urls.settings || null,
                 });
                 return;
             }
@@ -1300,6 +1394,7 @@ export const createApp = () => {
             const rawPosterContext = request.body.poster && typeof request.body.poster === 'object'
                 ? request.body.poster
                 : {};
+            const requestOrderHints = extractRequestOrderLookupHints(request);
             const requiresPosterTransactionLookup = !normalizeText(
                 rawPosterContext.spotId
                 || rawPosterContext.spot_id,
@@ -1318,10 +1413,21 @@ export const createApp = () => {
                     || (posterTransaction && posterTransaction.transactionId)
                     || '',
                 ),
+                orderNumber: normalizeText(
+                    rawPosterContext.orderNumber
+                    || rawPosterContext.order_number
+                    || (request.body.payload && request.body.payload.orderNumber)
+                    || '',
+                ),
                 spotId: normalizeText(
                     rawPosterContext.spotId
                     || rawPosterContext.spot_id
                     || (posterTransaction && posterTransaction.spotId)
+                    || '',
+                ),
+                spotName: normalizeText(
+                    rawPosterContext.spotName
+                    || rawPosterContext.spot_name
                     || '',
                 ),
             };
@@ -1389,7 +1495,10 @@ export const createApp = () => {
                 },
                 posterContextResolved: {
                     transactionId: posterContext.transactionId || null,
+                    orderNumber: posterContext.orderNumber || null,
                     spotId: posterContext.spotId || null,
+                    spotName: posterContext.spotName || null,
+                    transactionLookupCandidates: requestOrderHints.transactionLookupCandidates,
                     transactionLookupUsed: Boolean(posterTransaction),
                 },
                 requestPayload: payload,

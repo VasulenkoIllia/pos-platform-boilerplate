@@ -45,6 +45,7 @@ const sendOrderToShipday = async (requestPayload) => {
 
     const response = await fetch(buildEndpoint('/api/shipday/orders'), {
         method: 'POST',
+        credentials: 'same-origin',
         headers,
         body: JSON.stringify(requestPayload),
     });

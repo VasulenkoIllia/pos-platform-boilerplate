@@ -406,6 +406,7 @@ const buildShipdayRequest = ({
     const posterContext = {
         orderId: posterOrderId || '',
         transactionId: posterTransactionId || '',
+        orderNumber: String(getOrderNumber(order) || draft.orderNumber || '').trim(),
         serviceMode: order && order.serviceMode ? order.serviceMode : '',
         spotId: getPosterSpotId(order),
         spotName: getPosterSpotName(order),
@@ -629,6 +630,7 @@ class PosterBaseApp extends React.Component {
             },
             lastOrderSnapshot: order,
             popupOpen: false,
+            posterAccountHint: getPosterAccountHint(),
             shipdayDraft: buildShipdayDraft(order),
             shipdayStatus: INITIAL_SHIPDAY_STATUS,
         });
@@ -844,7 +846,7 @@ class PosterBaseApp extends React.Component {
         notify = false,
         openPopupOnError = false,
     } = {}) {
-        const { lastOrderSnapshot } = this.state;
+        const { lastOrderSnapshot, posterAccountHint } = this.state;
 
         this.setState({
             shipdayDraft,
@@ -860,7 +862,7 @@ class PosterBaseApp extends React.Component {
             const result = await sendOrderToShipday(buildShipdayRequest({
                 draft: shipdayDraft,
                 order: lastOrderSnapshot,
-                account: getPosterAccountHint(),
+                account: posterAccountHint || getPosterAccountHint(),
             }));
             const shipdayStatus = buildShipdaySuccessStatus(result);
             const shipdayReference = extractShipdayReference(result);
@@ -902,7 +904,7 @@ class PosterBaseApp extends React.Component {
                 }).catch(() => null);
             }
 
-            if (openPopupOnError && !(error.response && error.response.requiresAccountSettings)) {
+            if (openPopupOnError) {
                 this.openShipdayPopup({
                     shipdayDraft,
                     shipdayStatus,
@@ -1016,6 +1018,29 @@ class PosterBaseApp extends React.Component {
                     {JSON.stringify(shipdayStatus.details, null, 2)}
                 </pre>
             </details>
+        );
+    }
+
+    renderShipdayStatusAction() {
+        const { posterAccountHint, shipdayStatus } = this.state;
+        const settingsUrl = (
+            shipdayStatus.details
+            && shipdayStatus.details.settingsUrl
+        ) || buildPosterSettingsUrl(posterAccountHint || '');
+
+        if (!shipdayStatus.details || !shipdayStatus.details.requiresAccountSettings || !settingsUrl) {
+            return null;
+        }
+
+        return (
+            <a
+                className="btn btn-outline-primary shipday-form__settings-link"
+                href={settingsUrl}
+                target="_blank"
+                rel="noreferrer"
+            >
+                Відкрити налаштування
+            </a>
         );
     }
 
@@ -1138,6 +1163,7 @@ class PosterBaseApp extends React.Component {
             : 'Відправити в Shipday';
         const isRealMode = posterMode === 'real';
         const isFunctionsLaunch = Boolean(lastLaunchContext && lastLaunchContext.place === 'functions');
+        const isOrderLaunch = Boolean(lastLaunchContext && lastLaunchContext.place === 'order');
         const showFunctionsHub = isRealMode && isFunctionsLaunch;
         const mainContent = showFunctionsHub ? this.renderFunctionsHub() : (
             <section className="info-card info-card--highlight">
@@ -1193,6 +1219,7 @@ class PosterBaseApp extends React.Component {
                             name="orderNumber"
                             value={shipdayDraft.orderNumber}
                             onChange={this.handleShipdayDraftChange}
+                            readOnly={isRealMode && isOrderLaunch}
                         />
                     </label>
 
@@ -1277,6 +1304,7 @@ class PosterBaseApp extends React.Component {
                             {shipdayStatus.message}
                         </span>
                     )}
+                    {this.renderShipdayStatusAction()}
                 </div>
 
                 {this.renderShipdayDetails()}

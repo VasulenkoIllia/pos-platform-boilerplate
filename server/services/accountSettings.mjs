@@ -41,6 +41,19 @@ const normalizeSpotId = (value) => {
     return normalizedValue || '';
 };
 
+const normalizeComparableText = value => normalizeText(value).toLowerCase().replace(/\s+/g, ' ');
+
+const isComparableTextMatch = (leftValue, rightValue) => {
+    const left = normalizeComparableText(leftValue);
+    const right = normalizeComparableText(rightValue);
+
+    if (!left || !right) {
+        return false;
+    }
+
+    return left === right || left.includes(right) || right.includes(left);
+};
+
 const normalizePosterSpot = (spot) => {
     const spotId = normalizeSpotId(spot && (spot.spotId || spot.spot_id || spot.id));
 
@@ -152,6 +165,45 @@ const mergePickupWithPosterSpot = ({
     return mergedPickup;
 };
 
+const resolvePosterSpotIdFromContext = ({
+    posterSpotMap,
+    posterContext,
+    fallbackSpotId,
+}) => {
+    const explicitSpotId = normalizeSpotId(
+        posterContext
+        && (
+            posterContext.spotId
+            || posterContext.spot_id
+        ),
+    );
+
+    if (explicitSpotId) {
+        return explicitSpotId;
+    }
+
+    const spotNameHint = normalizeText(
+        posterContext
+        && (
+            posterContext.spotName
+            || posterContext.spot_name
+        ),
+    );
+
+    if (spotNameHint) {
+        const matchedEntries = Array.from(posterSpotMap.entries()).filter(([, spot]) => isComparableTextMatch(
+            spot && (spot.name || spot.spot_name || spot.spotName),
+            spotNameHint,
+        ));
+
+        if (matchedEntries.length === 1) {
+            return matchedEntries[0][0];
+        }
+    }
+
+    return fallbackSpotId;
+};
+
 export const resolveShipdayAccountConfig = ({
     accountSettings,
     globalShipdayConfig,
@@ -167,16 +219,13 @@ export const resolveShipdayAccountConfig = ({
     const mockMode = isExplicitMockMode || !apiKey;
     const posterSpotMap = buildPosterSpotMap(settings && settings.posterSpots);
     const pickupMappings = settings && settings.pickupMappings ? settings.pickupMappings : {};
-    const explicitSpotId = normalizeSpotId(
-        posterContext
-        && (
-            posterContext.spotId
-            || posterContext.spot_id
-        ),
-    );
     const fallbackSpotId = normalizeSpotId(settings && settings.defaultSpotId);
     const singleSpotId = posterSpotMap.size === 1 ? Array.from(posterSpotMap.keys())[0] : '';
-    const resolvedSpotId = explicitSpotId || fallbackSpotId || singleSpotId;
+    const resolvedSpotId = resolvePosterSpotIdFromContext({
+        posterSpotMap,
+        posterContext,
+        fallbackSpotId,
+    }) || singleSpotId;
     const posterSpot = resolvedSpotId ? posterSpotMap.get(resolvedSpotId) : null;
     const pickupOverride = resolvedSpotId ? pickupMappings[resolvedSpotId] : null;
     const fallbackPickup = normalizePickup(globalShipdayConfig.defaultPickup);
