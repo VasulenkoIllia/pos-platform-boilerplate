@@ -398,6 +398,34 @@ const buildShipdayRequest = ({
     };
 };
 
+const buildPosterSettingsUrl = (account = '') => {
+    const baseUrl = String(APP_CONFIG.externalService.baseUrl || '').replace(/\/+$/, '');
+    const settingsPath = String(APP_CONFIG.externalService.settingsPath || '/poster/settings').replace(/^\/+/, '');
+
+    if (!baseUrl) {
+        return '';
+    }
+
+    const url = new URL(`${baseUrl}/${settingsPath}`);
+
+    if (String(account || '').trim()) {
+        url.searchParams.set('account', String(account).trim());
+    }
+
+    return url.toString();
+};
+
+const getKnownShipdayAccounts = (serviceStatus) => {
+    const accounts = serviceStatus
+        && serviceStatus.details
+        && serviceStatus.details.shipday
+        && Array.isArray(serviceStatus.details.shipday.accounts)
+        ? serviceStatus.details.shipday.accounts
+        : [];
+
+    return accounts;
+};
+
 const getMissingShipdayFields = (draft) => {
     const missingFields = [];
 
@@ -521,6 +549,7 @@ class PosterBaseApp extends React.Component {
             lastLaunchContext: null,
             lastOrderSnapshot: null,
             popupOpen: !isPosterAvailable(),
+            posterAccountHint: getPosterAccountHint(),
             posterDebugState: getPosterDebugState(),
             posterMode: getPosterMode(),
             runtimeLabel: getRuntimeLabel(environment),
@@ -637,6 +666,7 @@ class PosterBaseApp extends React.Component {
 
         this.setState({
             environment,
+            posterAccountHint: getPosterAccountHint(),
             posterDebugState: getPosterDebugState(),
             posterMode: getPosterMode(),
             runtimeLabel: getRuntimeLabel(environment),
@@ -974,6 +1004,115 @@ class PosterBaseApp extends React.Component {
         );
     }
 
+    renderFunctionsHub() {
+        const {
+            isRefreshing,
+            posterAccountHint,
+            serviceStatus,
+        } = this.state;
+        const knownAccounts = getKnownShipdayAccounts(serviceStatus);
+        const fallbackAccount = !posterAccountHint && knownAccounts.length === 1
+            ? knownAccounts[0].account
+            : '';
+        const resolvedAccount = posterAccountHint || fallbackAccount;
+        const accountSummary = resolvedAccount
+            ? knownAccounts.find(account => account.account === resolvedAccount) || null
+            : null;
+        const settingsUrl = buildPosterSettingsUrl(resolvedAccount);
+        let shipdayMode = 'Не визначено';
+
+        if (accountSummary) {
+            shipdayMode = accountSummary.mockMode ? 'Mock' : 'Live';
+        }
+        const shipdayAuthMode = accountSummary && accountSummary.authMode
+            ? accountSummary.authMode
+            : 'Не визначено';
+        const defaultSpot = accountSummary && accountSummary.defaultSpotId
+            ? `Spot #${accountSummary.defaultSpotId}`
+            : 'Не вибрано';
+        const spotCount = accountSummary && Number.isFinite(accountSummary.spotsCount)
+            ? String(accountSummary.spotsCount)
+            : '0';
+        const statusChipClassName = resolvedAccount
+            ? 'status-chip status-chip--success'
+            : 'status-chip status-chip--warning';
+
+        return (
+            <section className="info-card info-card--highlight service-hub">
+                <div className="service-hub__header">
+                    <div className={statusChipClassName}>
+                        {resolvedAccount ? 'Poster account визначено' : 'Потрібно обрати акаунт'}
+                    </div>
+                    <h2>Налаштування Shipday</h2>
+                    <p className="info-card__meta">
+                        Кнопка в меню «Функції» використовується як сервісний вхід:
+                        тут перевіряємо підключення і відкриваємо веб-налаштування.
+                        Відправка замовлення в Shipday має запускатись з екрана конкретного delivery order.
+                    </p>
+                </div>
+
+                <div className="details-list">
+                    <div className="details-list__row">
+                        <span>Поточний Poster account</span>
+                        <strong>{resolvedAccount || 'Не вдалося визначити автоматично'}</strong>
+                    </div>
+                    <div className="details-list__row">
+                        <span>Backend</span>
+                        <strong>{serviceStatus.label}</strong>
+                    </div>
+                    <div className="details-list__row">
+                        <span>Shipday mode</span>
+                        <strong>{shipdayMode}</strong>
+                    </div>
+                    <div className="details-list__row">
+                        <span>Auth mode</span>
+                        <strong>{shipdayAuthMode}</strong>
+                    </div>
+                    <div className="details-list__row">
+                        <span>Default pickup spot</span>
+                        <strong>{defaultSpot}</strong>
+                    </div>
+                    <div className="details-list__row">
+                        <span>Синхронізовано точок</span>
+                        <strong>{spotCount}</strong>
+                    </div>
+                </div>
+
+                <div className="service-hub__actions">
+                    <a
+                        className="btn btn-primary"
+                        href={settingsUrl || buildPosterSettingsUrl('')}
+                        target="_blank"
+                        rel="noreferrer"
+                    >
+                        {resolvedAccount ? 'Відкрити налаштування акаунта' : 'Вибрати акаунт і налаштувати'}
+                    </a>
+                    <button
+                        type="button"
+                        className="btn btn-outline-primary"
+                        onClick={this.refreshStatus}
+                        disabled={isRefreshing}
+                    >
+                        {isRefreshing ? 'Оновлення...' : 'Оновити статус'}
+                    </button>
+                </div>
+
+                {!resolvedAccount && (
+                    <p className="service-hub__note">
+                        Якщо акаунт не визначився автоматично, backend відкриє сторінку
+                        вибору підключеного Poster account.
+                    </p>
+                )}
+
+                {serviceStatus.message && serviceStatus.state !== 'connected' && (
+                    <p className="shipday-form__status shipday-form__status--error">
+                        {serviceStatus.message}
+                    </p>
+                )}
+            </section>
+        );
+    }
+
     render() {
         const {
             checkedAt,
@@ -1008,6 +1147,151 @@ class PosterBaseApp extends React.Component {
             ? 'Відправка...'
             : 'Відправити в Shipday';
         const isRealMode = posterMode === 'real';
+        const isFunctionsLaunch = Boolean(lastLaunchContext && lastLaunchContext.place === 'functions');
+        const showFunctionsHub = isRealMode && isFunctionsLaunch;
+        const mainContent = showFunctionsHub ? this.renderFunctionsHub() : (
+            <section className="info-card info-card--highlight">
+                {!isRealMode && (
+                    <div className="poster-base-app__compact-header">
+                        <div>
+                            <div className={getPosterModeBadgeClassName(posterMode)}>
+                                {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
+                            </div>
+                            <h1>{APP_CONFIG.name}</h1>
+                            <p>
+                                Мінімальний екран інтеграції для відправки доставки в Shipday.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            className="btn btn-outline-primary poster-base-app__refresh"
+                            onClick={this.refreshStatus}
+                            disabled={isRefreshing}
+                        >
+                            {isRefreshing ? 'Оновлення...' : 'Оновити'}
+                        </button>
+                    </div>
+                )}
+
+                {!isRealMode && (
+                    <div className="details-list">
+                        <div className="details-list__row">
+                            <span>Джерело</span>
+                            <strong>{contextPlace}</strong>
+                        </div>
+                        <div className="details-list__row">
+                            <span>Замовлення</span>
+                            <strong>{shipdayDraft.orderNumber}</strong>
+                        </div>
+                        <div className="details-list__row">
+                            <span>Контекст</span>
+                            <strong>{orderContextSummary}</strong>
+                        </div>
+                        <div className="details-list__row">
+                            <span>Backend</span>
+                            <strong>{serviceStatus.label}</strong>
+                        </div>
+                    </div>
+                )}
+
+                <div className="shipday-form">
+                    <label className="shipday-form__field" htmlFor="shipday-order-number">
+                        <span>Order number</span>
+                        <input
+                            id="shipday-order-number"
+                            className="form-control"
+                            name="orderNumber"
+                            value={shipdayDraft.orderNumber}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field" htmlFor="shipday-customer-name">
+                        <span>Клієнт</span>
+                        <input
+                            id="shipday-customer-name"
+                            className="form-control"
+                            name="customerName"
+                            value={shipdayDraft.customerName}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field" htmlFor="shipday-customer-phone">
+                        <span>Телефон</span>
+                        <input
+                            id="shipday-customer-phone"
+                            className="form-control"
+                            name="customerPhone"
+                            value={shipdayDraft.customerPhone}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-address">
+                        <span>Адреса доставки</span>
+                        <input
+                            id="shipday-delivery-address"
+                            className="form-control"
+                            name="deliveryAddress"
+                            value={shipdayDraft.deliveryAddress}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
+                        <span>Позиції замовлення</span>
+                        <input
+                            id="shipday-order-item"
+                            className="form-control"
+                            name="orderItem"
+                            value={shipdayDraft.orderItem}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field" htmlFor="shipday-order-total">
+                        <span>Сума</span>
+                        <input
+                            id="shipday-order-total"
+                            className="form-control"
+                            name="orderTotal"
+                            value={shipdayDraft.orderTotal}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
+                        <span>Інструкція курʼєру</span>
+                        <input
+                            id="shipday-delivery-instruction"
+                            className="form-control"
+                            name="deliveryInstruction"
+                            value={shipdayDraft.deliveryInstruction}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+                </div>
+
+                <div className={isRealMode ? 'shipday-form__actions' : 'mock-controls'}>
+                    <button
+                        type="button"
+                        className="btn btn-success"
+                        onClick={this.handleShipdaySend}
+                        disabled={shipdayStatus.state === 'sending'}
+                    >
+                        {shipdayActionLabel}
+                    </button>
+                    {shipdayStatus.message && (
+                        <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
+                            {shipdayStatus.message}
+                        </span>
+                    )}
+                </div>
+
+                {this.renderShipdayDetails()}
+            </section>
+        );
 
         return (
             <div
@@ -1015,147 +1299,7 @@ class PosterBaseApp extends React.Component {
                 className={`poster-base-app ${isRealMode ? 'poster-base-app--real' : ''}`}
             >
                 <div className="poster-base-app__panel">
-                    <section className="info-card info-card--highlight">
-                        {!isRealMode && (
-                            <div className="poster-base-app__compact-header">
-                                <div>
-                                    <div className={getPosterModeBadgeClassName(posterMode)}>
-                                        {posterMode === 'mock' ? 'Preview mode' : 'Доставка Shipday'}
-                                    </div>
-                                    <h1>{APP_CONFIG.name}</h1>
-                                    <p>
-                                        Мінімальний екран інтеграції для відправки доставки в Shipday.
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    className="btn btn-outline-primary poster-base-app__refresh"
-                                    onClick={this.refreshStatus}
-                                    disabled={isRefreshing}
-                                >
-                                    {isRefreshing ? 'Оновлення...' : 'Оновити'}
-                                </button>
-                            </div>
-                        )}
-
-                        {!isRealMode && (
-                            <div className="details-list">
-                                <div className="details-list__row">
-                                    <span>Джерело</span>
-                                    <strong>{contextPlace}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Замовлення</span>
-                                    <strong>{shipdayDraft.orderNumber}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Контекст</span>
-                                    <strong>{orderContextSummary}</strong>
-                                </div>
-                                <div className="details-list__row">
-                                    <span>Backend</span>
-                                    <strong>{serviceStatus.label}</strong>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="shipday-form">
-                            <label className="shipday-form__field" htmlFor="shipday-order-number">
-                                <span>Order number</span>
-                                <input
-                                    id="shipday-order-number"
-                                    className="form-control"
-                                    name="orderNumber"
-                                    value={shipdayDraft.orderNumber}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field" htmlFor="shipday-customer-name">
-                                <span>Клієнт</span>
-                                <input
-                                    id="shipday-customer-name"
-                                    className="form-control"
-                                    name="customerName"
-                                    value={shipdayDraft.customerName}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field" htmlFor="shipday-customer-phone">
-                                <span>Телефон</span>
-                                <input
-                                    id="shipday-customer-phone"
-                                    className="form-control"
-                                    name="customerPhone"
-                                    value={shipdayDraft.customerPhone}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-address">
-                                <span>Адреса доставки</span>
-                                <input
-                                    id="shipday-delivery-address"
-                                    className="form-control"
-                                    name="deliveryAddress"
-                                    value={shipdayDraft.deliveryAddress}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
-                                <span>Позиції замовлення</span>
-                                <input
-                                    id="shipday-order-item"
-                                    className="form-control"
-                                    name="orderItem"
-                                    value={shipdayDraft.orderItem}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field" htmlFor="shipday-order-total">
-                                <span>Сума</span>
-                                <input
-                                    id="shipday-order-total"
-                                    className="form-control"
-                                    name="orderTotal"
-                                    value={shipdayDraft.orderTotal}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-
-                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
-                                <span>Інструкція курʼєру</span>
-                                <input
-                                    id="shipday-delivery-instruction"
-                                    className="form-control"
-                                    name="deliveryInstruction"
-                                    value={shipdayDraft.deliveryInstruction}
-                                    onChange={this.handleShipdayDraftChange}
-                                />
-                            </label>
-                        </div>
-
-                        <div className={isRealMode ? 'shipday-form__actions' : 'mock-controls'}>
-                            <button
-                                type="button"
-                                className="btn btn-success"
-                                onClick={this.handleShipdaySend}
-                                disabled={shipdayStatus.state === 'sending'}
-                            >
-                                {shipdayActionLabel}
-                            </button>
-                            {shipdayStatus.message && (
-                                <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
-                                    {shipdayStatus.message}
-                                </span>
-                            )}
-                        </div>
-
-                        {this.renderShipdayDetails()}
-                    </section>
+                    {mainContent}
 
                     {posterMode === 'mock' && (
                         <section className="info-card info-card--highlight">

@@ -574,6 +574,45 @@ export const renderSuccessPage = ({
     `,
 });
 
+export const renderAccountChooserPage = ({
+    appName,
+    accounts,
+    settingsPath,
+    connectPath,
+}) => {
+    const items = Array.isArray(accounts) ? accounts : [];
+
+    return renderLayout({
+        title: `${appName} | Оберіть акаунт`,
+        eyebrow: 'Poster accounts',
+        heading: 'Оберіть акаунт для налаштування',
+        body: items.length
+            ? `
+                <p>У цьому backend уже підключено кілька Poster акаунтів. Щоб відкрити Shipday settings, спочатку обери потрібний акаунт.</p>
+                <div class="spot-list">
+                    ${items.map(item => `
+                        <section class="spot-card">
+                            <div class="spot-card__meta">
+                                <strong>${escapeHtml(item.account)}</strong>
+                                <div>OAuth: ${escapeHtml(item.oauthConnected ? 'Підключено' : 'Не підключено')}</div>
+                                <div>Shipday: ${escapeHtml(item.shipdayConfigured ? 'Налаштовано' : 'Ще не налаштовано')}</div>
+                            </div>
+                            <div class="actions">
+                                <a class="button" href="${escapeHtml(`${settingsPath}?account=${encodeURIComponent(item.account)}`)}">Відкрити налаштування</a>
+                            </div>
+                        </section>
+                    `).join('')}
+                </div>
+            `
+            : `
+                <p>У backend ще немає підключених Poster акаунтів. Спочатку заверши connect flow.</p>
+                <div class="actions">
+                    <a class="button" href="${escapeHtml(connectPath)}">Почати підключення</a>
+                </div>
+            `,
+    });
+};
+
 export const renderConfigErrorPage = ({
     appName,
     title,

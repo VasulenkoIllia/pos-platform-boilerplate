@@ -13,6 +13,7 @@ import config, {
 } from './config.mjs';
 import { createStorage } from './lib/storage.mjs';
 import {
+    renderAccountChooserPage,
     renderConfigErrorPage,
     renderConnectPage,
     renderPosterErrorPage,
@@ -695,13 +696,42 @@ export const createApp = () => {
         const account = await resolveRequestAccount(request);
 
         if (!account) {
-            response.status(400).type('html').send(renderConfigErrorPage({
-                appName: config.appName,
-                title: 'Не вдалося визначити Poster account.',
-                heading: 'Потрібен account у query або рівно одна інсталяція в backend',
-                missing: ['account'],
-            }));
-            return;
+            try {
+                const [installations, settingsList] = await Promise.all([
+                    installationsStore.list(),
+                    accountSettingsStore.list(),
+                ]);
+                const settingsMap = new Map(settingsList.map(item => [item.account, item]));
+                const installationMap = new Map(installations.map(item => [item.account, item]));
+                const knownAccounts = Array.from(new Set([
+                    ...installationMap.keys(),
+                    ...settingsMap.keys(),
+                ])).sort((left, right) => left.localeCompare(right));
+
+                response.status(400).type('html').send(renderAccountChooserPage({
+                    appName: config.appName,
+                    accounts: knownAccounts.map(knownAccount => ({
+                        account: knownAccount,
+                        oauthConnected: installationMap.has(knownAccount),
+                        shipdayConfigured: Boolean(
+                            settingsMap.get(knownAccount)
+                            && settingsMap.get(knownAccount).shipday
+                            && settingsMap.get(knownAccount).shipday.apiKeyConfigured
+                        ),
+                    })),
+                    settingsPath: config.poster.settingsPath,
+                    connectPath: config.poster.connectPath,
+                }));
+                return;
+            } catch (chooserError) {
+                response.status(400).type('html').send(renderConfigErrorPage({
+                    appName: config.appName,
+                    title: 'Не вдалося визначити Poster account.',
+                    heading: 'Потрібен account у query або рівно одна інсталяція в backend',
+                    missing: ['account'],
+                }));
+                return;
+            }
         }
 
         if (String(request.query.sync || '') === '1') {

@@ -18,6 +18,7 @@ const APP_CONFIG = {
         name: 'Poster Render backend',
         baseUrl: getConfiguredBackendUrl(),
         healthcheckPath: '/health',
+        settingsPath: '/poster/settings',
         timeoutMs: 8000,
         requireBackendProxy: true,
     },

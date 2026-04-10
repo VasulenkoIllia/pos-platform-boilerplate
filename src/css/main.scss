@@ -138,6 +138,27 @@ html, html body {
         white-space: nowrap;
     }
 
+    .service-hub {
+        gap: 18px;
+    }
+
+    .service-hub__header {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .service-hub__actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .service-hub__note {
+        color: #5c6978;
+        font-size: 14px;
+    }
+
     .poster-base-app__grid {
         display: grid;
         gap: 20px;
@@ -366,6 +387,7 @@ html, html body {
 
         .poster-base-app__hero,
         .poster-base-app__compact-header,
+        .service-hub__actions,
         .info-card__header,
         .details-list__row,
         .mock-controls,
