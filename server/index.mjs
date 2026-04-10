@@ -39,11 +39,29 @@ import {
 } from './services/shipdayClient.mjs';
 
 const storage = await createStorage(config);
-const { installationsStore, accountSettingsStore } = storage;
+const { installationsStore, accountSettingsStore, orderLogStore } = storage;
 const currentFilePath = fileURLToPath(import.meta.url);
 const entryFilePath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 
 const isLocalHostname = hostname => ['localhost', '127.0.0.1', '::1'].includes(hostname);
+
+const extractPosterAccountFromUrl = (value) => {
+    if (!value) {
+        return '';
+    }
+
+    try {
+        const { hostname } = new URL(value);
+
+        if (!hostname.endsWith('.joinposter.com')) {
+            return '';
+        }
+
+        return hostname.replace(/\.joinposter\.com$/, '').split('.')[0] || '';
+    } catch (error) {
+        return '';
+    }
+};
 
 const isAllowedOrigin = (origin) => {
     if (!origin) {
@@ -169,11 +187,52 @@ const resolveRequestAccount = async (request) => {
         if (installation || settings) {
             return explicitAccount;
         }
+
+        console.warn(
+            `[resolveRequestAccount] Account hint "${explicitAccount}" не знайдено в БД. ` +
+            'Перевіряємо кількість інсталяцій для fallback.',
+        );
+    }
+
+    const accountFromHeaders = [
+        request.get('origin'),
+        request.get('referer'),
+    ]
+        .map(extractPosterAccountFromUrl)
+        .find(Boolean);
+
+    if (accountFromHeaders) {
+        const [installation, settings] = await Promise.all([
+            installationsStore.get(accountFromHeaders),
+            accountSettingsStore.get(accountFromHeaders),
+        ]);
+
+        if (installation || settings) {
+            return accountFromHeaders;
+        }
     }
 
     const installations = await installationsStore.list();
 
-    return installations.length === 1 ? installations[0].account : '';
+    if (installations.length === 1) {
+        if (explicitAccount) {
+            console.warn(
+                `[resolveRequestAccount] Fallback: використовуємо єдину інсталяцію "${installations[0].account}" ` +
+                `замість невідомого account hint "${explicitAccount}".`,
+            );
+        }
+
+        return installations[0].account;
+    }
+
+    if (installations.length > 1 && explicitAccount) {
+        console.error(
+            `[resolveRequestAccount] Account hint "${explicitAccount}" не знайдено, ` +
+            `а в БД ${installations.length} інсталяцій — неможливо визначити заклад.`,
+        );
+    }
+
+    return '';
 };
 
 const syncPosterSpotsForAccount = async (account) => {
@@ -320,6 +379,8 @@ export const createApp = () => {
                 apiBaseUrl: config.shipday.apiBaseUrl,
                 globalFallbackAuthMode: config.shipday.authMode,
                 ordersEndpoint: config.urls.shipdayOrders || null,
+                webhookEndpoint: config.urls.shipdayWebhook || null,
+                webhookTokenConfigured: Boolean(config.shipday.webhookToken),
                 fallbackConfigured: Boolean(config.shipday.apiKey),
                 accounts: accountSummaries,
             },
@@ -647,6 +708,20 @@ export const createApp = () => {
                 return;
             }
 
+            if (!resolvedShipdayConfig.apiKey && !resolvedShipdayConfig.isExplicitMockMode) {
+                response.status(400).json({
+                    ok: false,
+                    message: 'Shipday API key не налаштований для цього акаунта. Відкрий settings і додай ключ, або явно ввімкни Mock Mode.',
+                    requiresAccountSettings: true,
+                    settingsUrl: buildSettingsUrl({
+                        baseUrl: config.backendPublicUrl,
+                        settingsPath: config.poster.settingsPath,
+                        account,
+                    }) || null,
+                });
+                return;
+            }
+
             const payload = normalizeShipdayOrderPayload({
                 input: request.body,
                 defaultPickup: resolvedShipdayConfig.pickup,
@@ -709,6 +784,20 @@ export const createApp = () => {
                 return;
             }
 
+            // Зберігаємо orderNumber → account для подальшого пошуку по webhook / TurboSMS
+            try {
+                await orderLogStore.save({
+                    account,
+                    orderNumber: payload.orderNumber,
+                    shipdayOrderId: reference || null,
+                    spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                    customerPhone: payload.customerPhoneNumber || null,
+                    mockMode: resolvedShipdayConfig.mockMode,
+                });
+            } catch (logError) {
+                console.error('[order_log] Не вдалося зберегти запис:', logError.message);
+            }
+
             response.status(201).json(responsePayload);
         } catch (error) {
             next(error);
@@ -762,10 +851,60 @@ export const createApp = () => {
         }
     });
 
-    app.post('/webhooks/shipday', (request, response) => {
-        response.status(202).json({
+    app.post('/webhooks/shipday', async (request, response) => {
+        // Верифікація webhook token (налаштовується в Shipday Dashboard)
+        const expectedToken = config.shipday.webhookToken;
+
+        if (expectedToken) {
+            const receivedToken = request.headers['token'] || request.headers['x-shipday-token'];
+
+            if (receivedToken !== expectedToken) {
+                console.warn('[webhook/shipday] Невірний token у запиті.');
+                response.status(401).json({ ok: false, message: 'Невірний webhook token.' });
+                return;
+            }
+        }
+
+        const body = request.body;
+        const event = body && body.event;
+        const orderNumber = body && body.order && body.order.orderNumber;
+
+        console.log(`[webhook/shipday] Отримано подію: ${event || 'unknown'}, orderNumber: ${orderNumber || 'n/a'}`);
+
+        // Знаходимо account по orderNumber з order_log
+        let account = null;
+
+        if (orderNumber) {
+            try {
+                const logEntry = await orderLogStore.findByOrderNumber(String(orderNumber));
+
+                if (logEntry) {
+                    account = logEntry.account;
+                }
+            } catch (lookupError) {
+                console.error('[webhook/shipday] Помилка пошуку order_log:', lookupError.message);
+            }
+        }
+
+        if (!account) {
+            console.warn(`[webhook/shipday] Не вдалося знайти account для orderNumber "${orderNumber}". Ігноруємо.`);
+            // Повертаємо 200 щоб Shipday не повторював запит
+            response.status(200).json({ ok: true, message: 'Webhook отримано, account не знайдено — проігноровано.' });
+            return;
+        }
+
+        // TODO: Тут буде логіка відправки TurboSMS для подій ORDER_ONTHEWAY / ORDER_ASSIGNED
+        // const customerPhone = body.order && body.order.customer && body.order.customer.phone;
+        // const trackingLink = body.order && body.order.trackingLink;
+
+        console.log(`[webhook/shipday] Подія ${event} для замовлення ${orderNumber} (account: ${account}) — TurboSMS ще не реалізовано.`);
+
+        response.status(200).json({
             ok: true,
-            message: 'Shipday webhook route готовий, але обробка ще не реалізована.',
+            event: event || null,
+            account,
+            orderNumber: orderNumber || null,
+            message: 'Webhook отримано.',
         });
     });
 
