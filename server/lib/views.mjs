@@ -392,6 +392,7 @@ export const renderSettingsPage = ({
     ];
     const shipday = publicSettings && publicSettings.shipday ? publicSettings.shipday : {
         apiKeyConfigured: false,
+        apiKeyDecryptionFailed: false,
         apiKeyMasked: '',
         authMode: 'basic',
         mockMode: true,
@@ -406,6 +407,14 @@ export const renderSettingsPage = ({
             ${escapeHtml(notice.message)}
         </div>
     `).join('');
+    const shipdayKeyNotice = shipday.apiKeyDecryptionFailed
+        ? `
+            <div class="notice notice--danger">
+                Shipday API key для цього акаунта не вдалося розшифрувати. Найімовірніше, змінився ключ шифрування backend.
+                Встав API key ще раз і збережи налаштування.
+            </div>
+        `
+        : '';
     const spotCards = posterSpots.length
         ? posterSpots.map((spot) => {
             const override = publicSettings && publicSettings.pickupMappings
@@ -474,6 +483,7 @@ export const renderSettingsPage = ({
         heading: `Налаштування акаунта ${account}`,
         body: `
             ${noticeMarkup}
+            ${shipdayKeyNotice}
             <div class="panel-grid">
                 <div class="panel">
                     <p><strong>Poster account</strong></p>

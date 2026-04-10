@@ -116,6 +116,7 @@ export const toPublicAccountSettings = (settings) => {
             apiKeyMasked: settings.shipday && settings.shipday.apiKeyMasked
                 ? settings.shipday.apiKeyMasked
                 : maskSecret(settings.shipday && settings.shipday.apiKey),
+            apiKeyDecryptionFailed: Boolean(settings.shipday && settings.shipday.apiKeyDecryptionFailed),
             authMode: normalizeAuthMode(settings.shipday && settings.shipday.authMode),
             mockMode: Boolean(settings.shipday && settings.shipday.mockMode),
         },

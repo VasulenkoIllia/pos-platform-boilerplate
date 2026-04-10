@@ -124,9 +124,56 @@ const maskSecret = (value) => {
     return `${normalizedValue.slice(0, 3)}...${normalizedValue.slice(-3)}`;
 };
 
+const readStoredApiKey = ({
+    account,
+    record,
+    secret,
+}) => {
+    const plainApiKey = normalizeText(record && record.shipday && record.shipday.apiKey);
+
+    if (plainApiKey) {
+        return {
+            apiKey: plainApiKey,
+            apiKeyDecryptionFailed: false,
+        };
+    }
+
+    const encryptedApiKey = normalizeText(record && record.shipday && record.shipday.apiKeyEncrypted);
+
+    if (!encryptedApiKey) {
+        return {
+            apiKey: '',
+            apiKeyDecryptionFailed: false,
+        };
+    }
+
+    try {
+        return {
+            apiKey: decryptSecret(encryptedApiKey, secret),
+            apiKeyDecryptionFailed: false,
+        };
+    } catch (error) {
+        console.warn(
+            `[accountSettingsStore] Не вдалося розшифрувати Shipday API key для account "${account}". ` +
+            'Потрібно повторно зберегти ключ у settings.',
+        );
+
+        return {
+            apiKey: '',
+            apiKeyDecryptionFailed: true,
+        };
+    }
+};
+
 export const normalizeAccountSettingsRecord = (account, record, secret) => {
-    const apiKey = normalizeText(record && record.shipday && record.shipday.apiKey)
-        || decryptSecret(record && record.shipday && record.shipday.apiKeyEncrypted, secret);
+    const {
+        apiKey,
+        apiKeyDecryptionFailed,
+    } = readStoredApiKey({
+        account,
+        record,
+        secret,
+    });
     const pickupMappingsInput = (record && record.pickupMappings) || {};
     const pickupMappings = Object.entries(pickupMappingsInput).reduce((accumulator, [spotId, pickup]) => {
         const normalizedPickup = normalizePickup(pickup);
@@ -152,6 +199,7 @@ export const normalizeAccountSettingsRecord = (account, record, secret) => {
             apiKey,
             apiKeyMasked: maskSecret(apiKey),
             apiKeyConfigured: Boolean(apiKey),
+            apiKeyDecryptionFailed,
             authMode: normalizeText(record && record.shipday && record.shipday.authMode) || 'basic',
             mockMode: Boolean(record && record.shipday && record.shipday.mockMode),
         },
