@@ -75,6 +75,10 @@ const getOrderNumber = (order) => {
     const candidate = (
         order.orderName
         || order.order_name
+        || order.transactionId
+        || order.transaction_id
+        || order.transactionNumber
+        || order.transaction_number
         || order.orderNumber
         || order.order_number
         || order.number
@@ -376,7 +380,14 @@ const buildShipdayRequest = ({
     account,
 }) => {
     const posterOrderId = getOrderId(order);
-    const posterTransactionId = getOrderNumber(order) || String(draft.orderNumber || '').trim();
+    const posterTransactionId = String(
+        (order && (
+            order.transactionId
+            || order.transaction_id
+            || order.orderName
+            || order.order_name
+        )) || getOrderNumber(order) || String(draft.orderNumber || '').trim(),
+    ).trim();
     const posterContext = {
         orderId: posterOrderId || '',
         transactionId: posterTransactionId || '',
@@ -413,17 +424,6 @@ const buildPosterSettingsUrl = (account = '') => {
     }
 
     return url.toString();
-};
-
-const getKnownShipdayAccounts = (serviceStatus) => {
-    const accounts = serviceStatus
-        && serviceStatus.details
-        && serviceStatus.details.shipday
-        && Array.isArray(serviceStatus.details.shipday.accounts)
-        ? serviceStatus.details.shipday.accounts
-        : [];
-
-    return accounts;
 };
 
 const getMissingShipdayFields = (draft) => {
@@ -1010,29 +1010,8 @@ class PosterBaseApp extends React.Component {
             posterAccountHint,
             serviceStatus,
         } = this.state;
-        const knownAccounts = getKnownShipdayAccounts(serviceStatus);
-        const fallbackAccount = !posterAccountHint && knownAccounts.length === 1
-            ? knownAccounts[0].account
-            : '';
-        const resolvedAccount = posterAccountHint || fallbackAccount;
-        const accountSummary = resolvedAccount
-            ? knownAccounts.find(account => account.account === resolvedAccount) || null
-            : null;
+        const resolvedAccount = posterAccountHint;
         const settingsUrl = buildPosterSettingsUrl(resolvedAccount);
-        let shipdayMode = 'Не визначено';
-
-        if (accountSummary) {
-            shipdayMode = accountSummary.mockMode ? 'Mock' : 'Live';
-        }
-        const shipdayAuthMode = accountSummary && accountSummary.authMode
-            ? accountSummary.authMode
-            : 'Не визначено';
-        const defaultSpot = accountSummary && accountSummary.defaultSpotId
-            ? `Spot #${accountSummary.defaultSpotId}`
-            : 'Не вибрано';
-        const spotCount = accountSummary && Number.isFinite(accountSummary.spotsCount)
-            ? String(accountSummary.spotsCount)
-            : '0';
         const statusChipClassName = resolvedAccount
             ? 'status-chip status-chip--success'
             : 'status-chip status-chip--warning';
@@ -1061,20 +1040,16 @@ class PosterBaseApp extends React.Component {
                         <strong>{serviceStatus.label}</strong>
                     </div>
                     <div className="details-list__row">
-                        <span>Shipday mode</span>
-                        <strong>{shipdayMode}</strong>
+                        <span>Статус backend</span>
+                        <strong>{serviceStatus.state === 'connected' ? 'Готовий' : 'Потрібна перевірка'}</strong>
                     </div>
                     <div className="details-list__row">
-                        <span>Auth mode</span>
-                        <strong>{shipdayAuthMode}</strong>
-                    </div>
-                    <div className="details-list__row">
-                        <span>Default pickup spot</span>
-                        <strong>{defaultSpot}</strong>
-                    </div>
-                    <div className="details-list__row">
-                        <span>Синхронізовано точок</span>
-                        <strong>{spotCount}</strong>
+                        <span>Налаштування</span>
+                        <strong>
+                            {resolvedAccount
+                                ? 'Відкриються для поточного акаунта'
+                                : 'Відкриється account chooser для цього браузера'}
+                        </strong>
                     </div>
                 </div>
 
@@ -1099,8 +1074,8 @@ class PosterBaseApp extends React.Component {
 
                 {!resolvedAccount && (
                     <p className="service-hub__note">
-                        Якщо акаунт не визначився автоматично, backend відкриє сторінку
-                        вибору підключеного Poster account.
+                        Якщо акаунт не визначився автоматично, backend покаже тільки ті акаунти,
+                        які були підключені через Poster OAuth у цьому браузері.
                     </p>
                 )}
 

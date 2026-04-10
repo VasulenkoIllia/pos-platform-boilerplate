@@ -589,8 +589,14 @@ export const renderAccountChooserPage = ({
     accounts,
     settingsPath,
     connectPath,
+    notice = '',
+    description = '',
 }) => {
     const items = Array.isArray(accounts) ? accounts : [];
+    const bodyDescription = description || 'У цьому браузері доступно кілька підключених Poster акаунтів. Щоб відкрити Shipday settings, спочатку обери потрібний акаунт.';
+    const noticeMarkup = notice
+        ? `<div class="notice notice--danger">${escapeHtml(notice)}</div>`
+        : '';
 
     return renderLayout({
         title: `${appName} | Оберіть акаунт`,
@@ -598,7 +604,8 @@ export const renderAccountChooserPage = ({
         heading: 'Оберіть акаунт для налаштування',
         body: items.length
             ? `
-                <p>У цьому backend уже підключено кілька Poster акаунтів. Щоб відкрити Shipday settings, спочатку обери потрібний акаунт.</p>
+                ${noticeMarkup}
+                <p>${escapeHtml(bodyDescription)}</p>
                 <div class="spot-list">
                     ${items.map(item => `
                         <section class="spot-card">
@@ -615,7 +622,8 @@ export const renderAccountChooserPage = ({
                 </div>
             `
             : `
-                <p>У backend ще немає підключених Poster акаунтів. Спочатку заверши connect flow.</p>
+                ${noticeMarkup}
+                <p>${escapeHtml(description || 'У цьому браузері ще немає доступу до Poster акаунтів. Спочатку заверши connect flow для потрібного акаунта.')}</p>
                 <div class="actions">
                     <a class="button" href="${escapeHtml(connectPath)}">Почати підключення</a>
                 </div>

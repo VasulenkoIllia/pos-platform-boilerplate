@@ -44,6 +44,8 @@ const storage = await createStorage(config);
 const { installationsStore, accountSettingsStore, orderLogStore } = storage;
 const currentFilePath = fileURLToPath(import.meta.url);
 const entryFilePath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+const ACCOUNT_SESSION_COOKIE_NAME = 'poster_shipday_session';
+const ACCOUNT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 const isLocalHostname = hostname => ['localhost', '127.0.0.1', '::1'].includes(hostname);
 
@@ -111,6 +113,178 @@ const normalizeAccount = value => String(value || '').trim();
 const normalizeText = value => String(value || '').trim();
 const normalizeComparableText = value => normalizeText(value).toLowerCase().replace(/\s+/g, ' ');
 const normalizePhone = value => String(value || '').replace(/[^\d+]/g, '');
+
+const parseCookies = (request) => {
+    const header = String(request.headers.cookie || '').trim();
+
+    if (!header) {
+        return {};
+    }
+
+    return header.split(';').reduce((accumulator, chunk) => {
+        const [rawKey, ...rest] = chunk.split('=');
+        const key = String(rawKey || '').trim();
+
+        if (!key) {
+            return accumulator;
+        }
+
+        accumulator[key] = decodeURIComponent(rest.join('=').trim());
+        return accumulator;
+    }, {});
+};
+
+const toBase64Url = value => Buffer.from(value).toString('base64url');
+
+const signAccountSessionPayload = payload => crypto
+    .createHmac('sha256', config.security.settingsSecret)
+    .update(payload)
+    .digest('base64url');
+
+const normalizeAuthorizedAccounts = accounts => Array.from(new Set(
+    (Array.isArray(accounts) ? accounts : [])
+        .map(normalizeAccount)
+        .filter(Boolean),
+)).slice(0, 25);
+
+const readAccountSession = (request) => {
+    const cookies = parseCookies(request);
+    const rawValue = cookies[ACCOUNT_SESSION_COOKIE_NAME];
+
+    if (!rawValue) {
+        return {
+            accounts: [],
+            selectedAccount: '',
+        };
+    }
+
+    const [encodedPayload, signature] = String(rawValue).split('.');
+
+    if (!encodedPayload || !signature) {
+        return {
+            accounts: [],
+            selectedAccount: '',
+        };
+    }
+
+    const expectedSignature = signAccountSessionPayload(encodedPayload);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    const signatureBuffer = Buffer.from(signature);
+
+    if (
+        expectedBuffer.length !== signatureBuffer.length
+        || !crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
+    ) {
+        return {
+            accounts: [],
+            selectedAccount: '',
+        };
+    }
+
+    try {
+        const parsed = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+        const accounts = normalizeAuthorizedAccounts(parsed.accounts);
+        const selectedAccount = normalizeAccount(parsed.selectedAccount);
+
+        return {
+            accounts,
+            selectedAccount: accounts.includes(selectedAccount) ? selectedAccount : '',
+        };
+    } catch (error) {
+        return {
+            accounts: [],
+            selectedAccount: '',
+        };
+    }
+};
+
+const buildAccountSession = ({
+    existingSession,
+    account,
+}) => {
+    const normalizedAccount = normalizeAccount(account);
+    const accounts = normalizeAuthorizedAccounts([
+        ...(existingSession && Array.isArray(existingSession.accounts) ? existingSession.accounts : []),
+        normalizedAccount,
+    ]);
+
+    return {
+        accounts,
+        selectedAccount: accounts.includes(normalizedAccount)
+            ? normalizedAccount
+            : (accounts[0] || ''),
+        issuedAt: new Date().toISOString(),
+    };
+};
+
+const setAccountSessionCookie = (response, session) => {
+    const safeSession = {
+        accounts: normalizeAuthorizedAccounts(session && session.accounts),
+        selectedAccount: normalizeAccount(session && session.selectedAccount),
+        issuedAt: session && session.issuedAt ? session.issuedAt : new Date().toISOString(),
+    };
+    const encodedPayload = toBase64Url(JSON.stringify(safeSession));
+    const signature = signAccountSessionPayload(encodedPayload);
+    const cookieParts = [
+        `${ACCOUNT_SESSION_COOKIE_NAME}=${encodeURIComponent(`${encodedPayload}.${signature}`)}`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        `Max-Age=${ACCOUNT_SESSION_MAX_AGE_SECONDS}`,
+    ];
+
+    if (config.nodeEnv === 'production') {
+        cookieParts.push('Secure');
+    }
+
+    response.setHeader('Set-Cookie', cookieParts.join('; '));
+};
+
+const getAuthorizedSessionAccounts = async (request) => {
+    const session = readAccountSession(request);
+    const accounts = normalizeAuthorizedAccounts(session.accounts);
+    const authorizedAccounts = [];
+
+    for (const account of accounts) {
+        const [installation, settings] = await Promise.all([
+            installationsStore.get(account),
+            accountSettingsStore.get(account),
+        ]);
+
+        if (installation || settings) {
+            authorizedAccounts.push({
+                account,
+                installation,
+                settings,
+            });
+        }
+    }
+
+    return {
+        session,
+        authorizedAccounts,
+    };
+};
+
+const pickSettingsAccountFromSession = ({
+    requestedAccount,
+    session,
+    authorizedAccounts,
+}) => {
+    const authorizedNames = authorizedAccounts.map(item => item.account);
+
+    if (requestedAccount) {
+        return authorizedNames.includes(requestedAccount) ? requestedAccount : '';
+    }
+
+    const selectedAccount = normalizeAccount(session && session.selectedAccount);
+
+    if (selectedAccount && authorizedNames.includes(selectedAccount)) {
+        return selectedAccount;
+    }
+
+    return authorizedNames.length === 1 ? authorizedNames[0] : '';
+};
 
 const getPosterBodyHints = (request) => {
     if (!request.body || typeof request.body !== 'object') {
@@ -537,16 +711,6 @@ export const createApp = () => {
             installationsStore.list(),
             accountSettingsStore.list(),
         ]);
-        const accountSummaries = accountSettings.map(settings => ({
-            account: settings.account,
-            shipdayConfigured: Boolean(settings.shipday && settings.shipday.apiKeyConfigured),
-            authMode: settings.shipday && settings.shipday.authMode
-                ? settings.shipday.authMode
-                : config.shipday.authMode,
-            mockMode: Boolean(settings.shipday && settings.shipday.mockMode),
-            defaultSpotId: settings.defaultSpotId || '',
-            spotsCount: Array.isArray(settings.posterSpots) ? settings.posterSpots.length : 0,
-        }));
 
         response.json({
             ok: true,
@@ -557,8 +721,8 @@ export const createApp = () => {
                 applicationSecretConfigured: Boolean(config.poster.applicationSecret),
                 connectUrl: config.urls.connect || null,
                 oauthCallbackUrl: config.urls.oauthCallback || null,
-                installationsCount: installations.length,
-                accountSettingsCount: accountSettings.length,
+                hasInstallations: installations.length > 0,
+                hasAccountSettings: accountSettings.length > 0,
             },
             shipday: {
                 configured: accountSettings.some(settings => settings.shipday && settings.shipday.apiKeyConfigured),
@@ -569,12 +733,9 @@ export const createApp = () => {
                 webhookEndpoint: config.urls.shipdayWebhook || null,
                 webhookTokenConfigured: Boolean(config.shipday.webhookToken),
                 fallbackConfigured: Boolean(config.shipday.apiKey),
-                accounts: accountSummaries,
             },
             storage: {
                 driver: storage.driver,
-                posterInstallationsFile: config.poster.installationsFile,
-                accountSettingsFile: config.poster.accountSettingsFile,
             },
             checkedAt: new Date().toISOString(),
         });
@@ -654,6 +815,10 @@ export const createApp = () => {
                 account,
                 authResult,
             }));
+            setAccountSessionCookie(response, buildAccountSession({
+                existingSession: readAccountSession(request),
+                account,
+            }));
 
             let synced = false;
 
@@ -693,45 +858,32 @@ export const createApp = () => {
     });
 
     app.get(config.poster.settingsPath, async (request, response, next) => {
-        const account = await resolveRequestAccount(request);
+        const requestedAccount = normalizeAccount(request.query.account);
+        const { session, authorizedAccounts } = await getAuthorizedSessionAccounts(request);
+        const account = pickSettingsAccountFromSession({
+            requestedAccount,
+            session,
+            authorizedAccounts,
+        });
 
         if (!account) {
-            try {
-                const [installations, settingsList] = await Promise.all([
-                    installationsStore.list(),
-                    accountSettingsStore.list(),
-                ]);
-                const settingsMap = new Map(settingsList.map(item => [item.account, item]));
-                const installationMap = new Map(installations.map(item => [item.account, item]));
-                const knownAccounts = Array.from(new Set([
-                    ...installationMap.keys(),
-                    ...settingsMap.keys(),
-                ])).sort((left, right) => left.localeCompare(right));
-
-                response.status(400).type('html').send(renderAccountChooserPage({
-                    appName: config.appName,
-                    accounts: knownAccounts.map(knownAccount => ({
-                        account: knownAccount,
-                        oauthConnected: installationMap.has(knownAccount),
-                        shipdayConfigured: Boolean(
-                            settingsMap.get(knownAccount)
-                            && settingsMap.get(knownAccount).shipday
-                            && settingsMap.get(knownAccount).shipday.apiKeyConfigured
-                        ),
-                    })),
-                    settingsPath: config.poster.settingsPath,
-                    connectPath: config.poster.connectPath,
-                }));
-                return;
-            } catch (chooserError) {
-                response.status(400).type('html').send(renderConfigErrorPage({
-                    appName: config.appName,
-                    title: 'Не вдалося визначити Poster account.',
-                    heading: 'Потрібен account у query або рівно одна інсталяція в backend',
-                    missing: ['account'],
-                }));
-                return;
-            }
+            response.status(authorizedAccounts.length ? 400 : 403).type('html').send(renderAccountChooserPage({
+                appName: config.appName,
+                accounts: authorizedAccounts.map(item => ({
+                    account: item.account,
+                    oauthConnected: Boolean(item.installation),
+                    shipdayConfigured: Boolean(item.settings && item.settings.shipday && item.settings.shipday.apiKeyConfigured),
+                })),
+                settingsPath: config.poster.settingsPath,
+                connectPath: config.poster.connectPath,
+                notice: requestedAccount
+                    ? `У цьому браузері немає доступу до акаунта ${requestedAccount}. Спочатку підключи його через Poster OAuth.`
+                    : '',
+                description: authorizedAccounts.length
+                    ? 'У цьому браузері доступно кілька підключених Poster акаунтів. Обери, для якого акаунта відкрити Shipday settings.'
+                    : 'У цьому браузері ще немає доступу до Poster акаунтів. Спочатку відкрий connect flow для потрібного акаунта.',
+            }));
+            return;
         }
 
         if (String(request.query.sync || '') === '1') {
@@ -756,6 +908,15 @@ export const createApp = () => {
         }
 
         try {
+            setAccountSessionCookie(response, {
+                ...session,
+                accounts: normalizeAuthorizedAccounts([
+                    ...authorizedAccounts.map(item => item.account),
+                    account,
+                ]),
+                selectedAccount: account,
+                issuedAt: new Date().toISOString(),
+            });
             const installation = await installationsStore.get(account);
 
             if (!installation) {
@@ -811,6 +972,26 @@ export const createApp = () => {
             return;
         }
 
+        const { session, authorizedAccounts } = await getAuthorizedSessionAccounts(request);
+
+        if (!authorizedAccounts.some(item => item.account === account)) {
+            response.status(403).type('html').send(renderAccountChooserPage({
+                appName: config.appName,
+                accounts: authorizedAccounts.map(item => ({
+                    account: item.account,
+                    oauthConnected: Boolean(item.installation),
+                    shipdayConfigured: Boolean(item.settings && item.settings.shipday && item.settings.shipday.apiKeyConfigured),
+                })),
+                settingsPath: config.poster.settingsPath,
+                connectPath: config.poster.connectPath,
+                notice: `Немає доступу до акаунта ${account}. Збереження налаштувань заблоковано.`,
+                description: authorizedAccounts.length
+                    ? 'У цьому браузері можна змінювати тільки ті акаунти, які були підключені через Poster OAuth.'
+                    : 'Спочатку підключи потрібний Poster акаунт через connect flow.',
+            }));
+            return;
+        }
+
         try {
             const installation = await installationsStore.get(account);
 
@@ -845,6 +1026,15 @@ export const createApp = () => {
             });
 
             await accountSettingsStore.save(nextSettings);
+            setAccountSessionCookie(response, {
+                ...session,
+                accounts: normalizeAuthorizedAccounts([
+                    ...authorizedAccounts.map(item => item.account),
+                    account,
+                ]),
+                selectedAccount: account,
+                issuedAt: new Date().toISOString(),
+            });
 
             response.redirect(buildSettingsRedirectUrl({
                 account,
@@ -858,16 +1048,29 @@ export const createApp = () => {
     });
 
     app.get('/api/poster/installations', async (request, response) => {
-        const installations = await installationsStore.list();
+        const { authorizedAccounts } = await getAuthorizedSessionAccounts(request);
 
         response.json({
             ok: true,
-            items: installations.map(toPublicInstallation),
+            items: authorizedAccounts
+                .filter(item => item.installation)
+                .map(item => toPublicInstallation(item.installation)),
         });
     });
 
     app.get('/api/poster/installations/:account', async (request, response) => {
-        const installation = await installationsStore.get(request.params.account);
+        const account = normalizeAccount(request.params.account);
+        const { authorizedAccounts } = await getAuthorizedSessionAccounts(request);
+
+        if (!authorizedAccounts.some(item => item.account === account)) {
+            response.status(403).json({
+                ok: false,
+                message: 'Немає доступу до цього Poster account.',
+            });
+            return;
+        }
+
+        const installation = await installationsStore.get(account);
 
         if (!installation) {
             response.status(404).json({
@@ -884,7 +1087,18 @@ export const createApp = () => {
     });
 
     app.get('/api/poster/settings/:account', async (request, response) => {
-        const settings = await accountSettingsStore.get(request.params.account);
+        const account = normalizeAccount(request.params.account);
+        const { authorizedAccounts } = await getAuthorizedSessionAccounts(request);
+
+        if (!authorizedAccounts.some(item => item.account === account)) {
+            response.status(403).json({
+                ok: false,
+                message: 'Немає доступу до цього Poster account.',
+            });
+            return;
+        }
+
+        const settings = await accountSettingsStore.get(account);
 
         response.json({
             ok: true,
