@@ -12,6 +12,7 @@
 - sync Poster spots
 - Shipday proxy
 - health/debug endpoints
+- browser-session isolation для settings page
 
 ## Локальний запуск backend
 
@@ -82,6 +83,7 @@ https://poster-shipday-bridge.onrender.com
 - не змінюй `SETTINGS_ENCRYPTION_SECRET` після запуску
 - тримай web service і Postgres в одному регіоні
 - після увімкнення Postgres ще раз пройди `Під’єднати`, якщо раніше дані були тільки у file-store
+- після `git push` Render оновлює тільки backend; POS bundle треба переливати в Poster окремо через `npm run deploy`
 
 ## Що вписати в Poster Developer
 
@@ -106,6 +108,8 @@ npm run deploy
 - `GET /api/shipday/orders/:orderNumber`
 - `POST /webhooks/shipday` — Shipday webhook (вказати в Shipday Dashboard)
 
+Важливо: `/api/poster/installations` і `/api/poster/settings/:account` тепер працюють тільки для акаунтів, які були підключені через Poster OAuth у поточному браузері. Це не публічні multi-tenant debug endpoints.
+
 ## Що налаштовує клієнт після install
 
 На settings page клієнт заповнює:
@@ -116,3 +120,5 @@ npm run deploy
 - `Default Poster spot`
 
 Цього достатньо, щоб кнопка `Shipday` у касі працювала.
+
+`Default Poster spot` потрібен тільки як fallback. Якщо backend зможе визначити реальну точку замовлення через POS `spotId` або Poster transaction lookup, саме вона піде в Shipday.

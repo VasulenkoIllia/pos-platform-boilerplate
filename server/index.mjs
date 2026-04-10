@@ -46,6 +46,8 @@ const currentFilePath = fileURLToPath(import.meta.url);
 const entryFilePath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 const ACCOUNT_SESSION_COOKIE_NAME = 'poster_shipday_session';
 const ACCOUNT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+const OAUTH_STATE_COOKIE_NAME = 'poster_shipday_oauth_state';
+const OAUTH_STATE_MAX_AGE_SECONDS = 60 * 10;
 
 const isLocalHostname = hostname => ['localhost', '127.0.0.1', '::1'].includes(hostname);
 
@@ -141,30 +143,25 @@ const signAccountSessionPayload = payload => crypto
     .update(payload)
     .digest('base64url');
 
-const normalizeAuthorizedAccounts = accounts => Array.from(new Set(
-    (Array.isArray(accounts) ? accounts : [])
-        .map(normalizeAccount)
-        .filter(Boolean),
-)).slice(0, 25);
+const buildSignedCookieValue = payload => {
+    const encodedPayload = toBase64Url(JSON.stringify(payload));
+    const signature = signAccountSessionPayload(encodedPayload);
 
-const readAccountSession = (request) => {
+    return `${encodedPayload}.${signature}`;
+};
+
+const readSignedCookiePayload = (request, cookieName) => {
     const cookies = parseCookies(request);
-    const rawValue = cookies[ACCOUNT_SESSION_COOKIE_NAME];
+    const rawValue = cookies[cookieName];
 
     if (!rawValue) {
-        return {
-            accounts: [],
-            selectedAccount: '',
-        };
+        return null;
     }
 
     const [encodedPayload, signature] = String(rawValue).split('.');
 
     if (!encodedPayload || !signature) {
-        return {
-            accounts: [],
-            selectedAccount: '',
-        };
+        return null;
     }
 
     const expectedSignature = signAccountSessionPayload(encodedPayload);
@@ -175,6 +172,70 @@ const readAccountSession = (request) => {
         expectedBuffer.length !== signatureBuffer.length
         || !crypto.timingSafeEqual(expectedBuffer, signatureBuffer)
     ) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    } catch (error) {
+        return null;
+    }
+};
+
+const appendCookieHeader = (response, cookieParts) => {
+    response.append('Set-Cookie', cookieParts.join('; '));
+};
+
+const setSignedCookie = ({
+    response,
+    cookieName,
+    payload,
+    maxAgeSeconds,
+}) => {
+    const cookieParts = [
+        `${cookieName}=${encodeURIComponent(buildSignedCookieValue(payload))}`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        `Max-Age=${maxAgeSeconds}`,
+    ];
+
+    if (config.nodeEnv === 'production') {
+        cookieParts.push('Secure');
+    }
+
+    appendCookieHeader(response, cookieParts);
+};
+
+const clearCookie = ({
+    response,
+    cookieName,
+}) => {
+    const cookieParts = [
+        `${cookieName}=`,
+        'Path=/',
+        'HttpOnly',
+        'SameSite=Lax',
+        'Max-Age=0',
+    ];
+
+    if (config.nodeEnv === 'production') {
+        cookieParts.push('Secure');
+    }
+
+    appendCookieHeader(response, cookieParts);
+};
+
+const normalizeAuthorizedAccounts = accounts => Array.from(new Set(
+    (Array.isArray(accounts) ? accounts : [])
+        .map(normalizeAccount)
+        .filter(Boolean),
+)).slice(0, 25);
+
+const readAccountSession = (request) => {
+    const parsed = readSignedCookiePayload(request, ACCOUNT_SESSION_COOKIE_NAME);
+
+    if (!parsed || typeof parsed !== 'object') {
         return {
             accounts: [],
             selectedAccount: '',
@@ -182,7 +243,6 @@ const readAccountSession = (request) => {
     }
 
     try {
-        const parsed = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
         const accounts = normalizeAuthorizedAccounts(parsed.accounts);
         const selectedAccount = normalizeAccount(parsed.selectedAccount);
 
@@ -196,6 +256,42 @@ const readAccountSession = (request) => {
             selectedAccount: '',
         };
     }
+};
+
+const buildOauthState = () => ({
+    nonce: crypto.randomBytes(24).toString('base64url'),
+    issuedAt: new Date().toISOString(),
+});
+
+const readOauthState = (request) => {
+    const parsed = readSignedCookiePayload(request, OAUTH_STATE_COOKIE_NAME);
+
+    if (!parsed || typeof parsed !== 'object') {
+        return null;
+    }
+
+    const nonce = normalizeText(parsed.nonce);
+
+    if (!nonce) {
+        return null;
+    }
+
+    const issuedAt = Date.parse(parsed.issuedAt || '');
+
+    if (!Number.isFinite(issuedAt)) {
+        return null;
+    }
+
+    const ageMs = Date.now() - issuedAt;
+
+    if (ageMs < 0 || ageMs > OAUTH_STATE_MAX_AGE_SECONDS * 1000) {
+        return null;
+    }
+
+    return {
+        nonce,
+        issuedAt: new Date(issuedAt).toISOString(),
+    };
 };
 
 const buildAccountSession = ({
@@ -223,21 +319,13 @@ const setAccountSessionCookie = (response, session) => {
         selectedAccount: normalizeAccount(session && session.selectedAccount),
         issuedAt: session && session.issuedAt ? session.issuedAt : new Date().toISOString(),
     };
-    const encodedPayload = toBase64Url(JSON.stringify(safeSession));
-    const signature = signAccountSessionPayload(encodedPayload);
-    const cookieParts = [
-        `${ACCOUNT_SESSION_COOKIE_NAME}=${encodeURIComponent(`${encodedPayload}.${signature}`)}`,
-        'Path=/',
-        'HttpOnly',
-        'SameSite=Lax',
-        `Max-Age=${ACCOUNT_SESSION_MAX_AGE_SECONDS}`,
-    ];
 
-    if (config.nodeEnv === 'production') {
-        cookieParts.push('Secure');
-    }
-
-    response.setHeader('Set-Cookie', cookieParts.join('; '));
+    setSignedCookie({
+        response,
+        cookieName: ACCOUNT_SESSION_COOKIE_NAME,
+        payload: safeSession,
+        maxAgeSeconds: ACCOUNT_SESSION_MAX_AGE_SECONDS,
+    });
 };
 
 const getAuthorizedSessionAccounts = async (request) => {
@@ -522,46 +610,54 @@ const resolvePosterTransactionForAccount = async ({
 
 const resolveRequestAccount = async (request) => {
     const explicitHints = Array.from(new Set(getPosterBodyHints(request)));
+    const installations = await installationsStore.list();
+    const hasMultipleInstallations = installations.length > 1;
+    const findExistingAccount = async (candidates) => {
+        for (const candidate of candidates) {
+            const normalizedCandidate = normalizeAccount(candidate);
 
-    for (const explicitAccount of explicitHints) {
-        const [installation, settings] = await Promise.all([
-            installationsStore.get(explicitAccount),
-            accountSettingsStore.get(explicitAccount),
-        ]);
+            if (!normalizedCandidate) {
+                continue;
+            }
 
-        if (installation || settings) {
-            return explicitAccount;
+            const [installation, settings] = await Promise.all([
+                installationsStore.get(normalizedCandidate),
+                accountSettingsStore.get(normalizedCandidate),
+            ]);
+
+            if (installation || settings) {
+                return normalizedCandidate;
+            }
         }
-    }
+
+        return '';
+    };
+    const accountFromHeaders = await findExistingAccount(
+        [
+            request.get('origin'),
+            request.get('referer'),
+        ]
+            .map(extractPosterAccountFromUrl)
+            .filter(Boolean),
+    );
+
+    const accountFromExplicitHints = await findExistingAccount(explicitHints);
 
     if (explicitHints.length) {
-        console.warn(
-            `[resolveRequestAccount] Account hints "${explicitHints.join(', ')}" не знайдені в БД. ` +
-            'Перевіряємо заголовки та fallback.',
-        );
-    }
-
-    const accountFromHeaders = [
-        request.get('origin'),
-        request.get('referer'),
-    ]
-        .map(extractPosterAccountFromUrl)
-        .find(Boolean);
-
-    if (accountFromHeaders) {
-        const [installation, settings] = await Promise.all([
-            installationsStore.get(accountFromHeaders),
-            accountSettingsStore.get(accountFromHeaders),
-        ]);
-
-        if (installation || settings) {
-            return accountFromHeaders;
+        if (!accountFromExplicitHints) {
+            console.warn(
+                `[resolveRequestAccount] Account hints "${explicitHints.join(', ')}" не знайдені в БД. ` +
+                'Перевіряємо сильніші сигнали та fallback.',
+            );
+        } else if (hasMultipleInstallations) {
+            console.warn(
+                `[resolveRequestAccount] Прямий account hint "${accountFromExplicitHints}" розглядаємо лише як слабкий fallback ` +
+                'для multi-tenant backend.',
+            );
         }
     }
 
-    const installations = await installationsStore.list();
-
-    if (installations.length > 1) {
+    if (hasMultipleInstallations) {
         const accountFromPosterOrder = await resolveRequestAccountByPosterOrder({
             request,
             installations,
@@ -579,6 +675,10 @@ const resolveRequestAccount = async (request) => {
         }
     }
 
+    if (accountFromHeaders) {
+        return accountFromHeaders;
+    }
+
     if (installations.length === 1) {
         if (explicitHints.length) {
             console.warn(
@@ -590,7 +690,18 @@ const resolveRequestAccount = async (request) => {
         return installations[0].account;
     }
 
-    if (installations.length > 1 && explicitHints.length) {
+    if (accountFromExplicitHints) {
+        if (hasMultipleInstallations) {
+            console.warn(
+                `[resolveRequestAccount] Використовуємо account "${accountFromExplicitHints}" лише як останній fallback, ` +
+                'бо сильніші сигнали не спрацювали.',
+            );
+        }
+
+        return accountFromExplicitHints;
+    }
+
+    if (hasMultipleInstallations && explicitHints.length) {
         console.error(
             `[resolveRequestAccount] Account hints "${explicitHints.join(', ')}" не знайдені, ` +
             `а в БД ${installations.length} інсталяцій — неможливо визначити заклад.`,
@@ -812,10 +923,20 @@ export const createApp = () => {
             return;
         }
 
+        const oauthState = buildOauthState();
+
+        setSignedCookie({
+            response,
+            cookieName: OAUTH_STATE_COOKIE_NAME,
+            payload: oauthState,
+            maxAgeSeconds: OAUTH_STATE_MAX_AGE_SECONDS,
+        });
+
         const oauthUrl = buildPosterOauthUrl({
             applicationId: config.poster.applicationId,
             redirectUri: config.urls.oauthCallback,
             oauthBaseUrl: config.poster.oauthBaseUrl,
+            state: oauthState.nonce,
         });
 
         response.redirect(oauthUrl);
@@ -824,6 +945,13 @@ export const createApp = () => {
     app.get(config.poster.redirectPath, async (request, response, next) => {
         const code = normalizeAccount(request.query.code);
         const account = normalizeAccount(request.query.account);
+        const state = normalizeText(request.query.state);
+        const oauthState = readOauthState(request);
+
+        clearCookie({
+            response,
+            cookieName: OAUTH_STATE_COOKIE_NAME,
+        });
 
         if (!code || !account) {
             response.status(400).type('html').send(renderPosterErrorPage({
@@ -832,6 +960,19 @@ export const createApp = () => {
                 message: 'OAuth callback прийшов без обовʼязкових параметрів.',
                 errors: [
                     'Очікувались query-параметри code та account.',
+                ],
+            }));
+            return;
+        }
+
+        if (!state || !oauthState || oauthState.nonce !== state) {
+            response.status(400).type('html').send(renderPosterErrorPage({
+                appName: config.appName,
+                heading: 'Не вдалося підтвердити Poster OAuth сесію',
+                message: 'OAuth callback прийшов з невалідним або простроченим state.',
+                errors: [
+                    'Повтори підключення ще раз через кнопку «Під’єднати».',
+                    'Цей захист потрібен, щоб не приймати сторонні або застарілі callback-запити.',
                 ],
             }));
             return;

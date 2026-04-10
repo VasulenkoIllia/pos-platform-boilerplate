@@ -6,6 +6,7 @@
 
 - POS-кнопка `Shipday` у касі Poster.
 - `one-click send` з екрана замовлення.
+- сервісний екран `Shipday` у `functions`.
 - fallback popup, якщо для відправки бракує клієнта, телефону або адреси.
 - Poster OAuth connect flow.
 - account-level settings page для кожного Poster акаунта.
@@ -15,6 +16,8 @@
 - live і mock режими для Shipday.
 - логування замовлень у `order_log` (`shipdayOrderId` / `orderNumber` → account).
 - Shipday webhook endpoint з верифікацією token.
+- browser-session ізоляція settings page: користувач бачить тільки ті Poster акаунти, які сам підключив у поточному браузері через OAuth.
+- CSRF-захист Poster OAuth через `state`.
 
 ## Архітектура
 
@@ -34,6 +37,8 @@
 - бере активне замовлення через Poster POS runtime
 - дотягує повний order, клієнта та назви позицій
 - збирає request до backend
+- з екрана `order` запускає відправку замовлення
+- з меню `functions` відкриває сервісний екран, а не ручну форму відправки
 - показує fallback popup тільки якщо не вистачає полів
 - показує debug-відповідь від backend/Shipday
 
@@ -53,6 +58,7 @@ Backend знаходиться в:
 - зберігає installation для конкретного Poster акаунта
 - зберігає Shipday settings для конкретного Poster акаунта
 - синхронізує точки Poster
+- визначає правильний Poster account для POS-запиту
 - визначає правильну pickup-точку
 - нормалізує payload під офіційний формат Shipday
 - відправляє `POST /orders` у Shipday
@@ -73,9 +79,9 @@ Shipday API key не можна зберігати в POS bundle.
 
 1. Користувач натискає `Під’єднати` в Poster.
 2. Poster веде його на `GET /poster/connect`.
-3. Backend запускає Poster OAuth.
+3. Backend запускає Poster OAuth і генерує захищений `state`.
 4. Poster повертає користувача на `/poster/auth/callback`.
-5. Backend зберігає Poster installation у базу.
+5. Backend перевіряє `state`, зберігає Poster installation у базу і додає акаунт у browser-session.
 6. Backend синхронізує список точок Poster.
 7. Користувач потрапляє на `/poster/settings?account=...`.
 
@@ -95,6 +101,8 @@ Backend автоматично:
 - синхронізує точки Poster
 - використовує адресу вибраної точки як pickup fallback
 
+Якщо у поточному браузері вже кілька Poster акаунтів, `/poster/settings` без `account` покаже chooser тільки для акаунтів цього браузера. Це не глобальний список усіх акаунтів із бази.
+
 ### 3. Відправка замовлення
 
 1. Касир відкриває замовлення доставки.
@@ -104,6 +112,17 @@ Backend автоматично:
 5. Backend формує Shipday request за docs.
 6. Backend відправляє `POST https://api.shipday.com/orders`.
 7. У касі показується результат.
+
+### Як backend визначає Poster account
+
+Для `POST /api/shipday/orders` backend використовує не один сигнал, а пріоритетний ланцюжок:
+
+1. lookup через Poster transaction по `transactionId`
+2. account із `Origin/Referer` `*.joinposter.com`
+3. явний `account hint` із POS request як слабкий fallback
+4. єдина installation у backend як останній fallback
+
+Це потрібно, щоб multi-tenant backend не відправив замовлення від чужого Poster акаунта через випадковий або підроблений hint.
 
 ## Формат Shipday, який ми використовуємо
 
@@ -173,8 +192,11 @@ Backend нормалізує запит у flat-структуру на кшта
 - кожен Poster акаунт має окремі installation і settings
 - у кожного акаунта свій Shipday API key
 - у кожного акаунта свій список Poster spots
-- кожне замовлення намагається взяти `spotId` із контексту POS
-- якщо `spotId` не прийшов, backend бере `defaultSpotId`
+- кожне замовлення спочатку намагається взяти `spotId` із POS payload
+- якщо `spotId` не прийшов, backend дотягує Poster transaction по `transactionId` і бере `transaction.spotId`
+- тільки якщо точку замовлення все одно не вдалося визначити, backend бере `defaultSpotId`
+
+Тобто `Default Poster spot` потрібен тільки як fallback. Якщо Poster може дати точну точку замовлення, вона має пріоритет.
 
 ## Зберігання даних
 
@@ -198,6 +220,26 @@ Backend нормалізує запит у flat-структуру на кшта
 - лог відправлених замовлень: `orderNumber`, `account`, `shipdayOrderId`, `spotId`, `customerPhone`, `mockMode`
 
 Shipday API key зберігається зашифрованим.
+
+## Ізоляція даних між організаціями
+
+Один backend може обслуговувати багато різних Poster організацій, але дані мають бути ізольовані.
+
+Що ізолюється по `account`:
+
+- Poster installation
+- Shipday settings
+- synced Poster spots
+- pickup mappings
+- `order_log`
+
+Що ізолюється по browser-session:
+
+- доступ до `/poster/settings`
+- доступ до `/api/poster/installations`
+- доступ до `/api/poster/settings/:account`
+
+Тобто різні організації не повинні бачити налаштування одна одної просто через shared backend URL.
 
 Таблиця `order_log` використовується для:
 
@@ -257,9 +299,11 @@ POS Platform має бути увімкнена.
 
 Очікувана поведінка:
 
-- якщо даних достатньо, popup не потрібен або відкриється тільки з результатом
+- якщо даних достатньо, іде `one-click send`
+- якщо даних бракує, відкривається fallback popup
 - backend відправляє live request у Shipday
 - у Shipday з’являється order
+- pickup у Shipday береться з реальної точки замовлення, а не з `default spot`, якщо `spotId` вдалося резолвити
 
 ### Fallback test
 
@@ -320,11 +364,12 @@ Webhook приймає всі події Shipday. Поточний статус 
 Дозволяє перевірити:
 
 - чи підключений Postgres
-- скільки installation збережено
-- скільки account settings збережено
-- які акаунти зараз налаштовані
+- чи є installation
+- чи є account settings
 - URL webhook endpoint
 - чи налаштований `SHIPDAY_WEBHOOK_TOKEN`
+
+`/health` навмисно не віддає список акаунтів або їхні налаштування назовні.
 
 ### Перевірка settings конкретного акаунта
 
@@ -354,15 +399,15 @@ Webhook приймає всі події Shipday. Поточний статус 
 
 ## Поведінка при відсутньому або невідомому account hint
 
-Backend отримує `account` hint від POS у тілі запиту. Можливі сценарії:
+Backend може отримати `account` hint від POS, але не довіряє йому беззастережно. Можливі сценарії:
 
 | Ситуація | Поведінка |
 |---|---|
-| Account hint є і знайдений у БД | Використовується цей account |
-| Account hint є, але не знайдений, є 1 інсталяція | Fallback на єдину інсталяцію + `console.warn` |
-| Account hint є, але не знайдений, є 2+ інсталяції | Backend пробує визначити account по `poster.transactionId` через Poster Web API; якщо не виходить, повертає HTTP 400 |
-| Account hint відсутній, є 1 інсталяція | Використовується єдина інсталяція |
-| Account hint відсутній, є 2+ інсталяцій | Backend пробує визначити account по `poster.transactionId`; якщо не виходить, повертає HTTP 400 |
+| Є `transactionId`, і Poster lookup дає однозначний акаунт | Використовується lookup-акаунт |
+| `transactionId` не допоміг, але є `Origin/Referer` з `*.joinposter.com` | Використовується акаунт із заголовків |
+| Сильні сигнали не спрацювали, але є валідний `account hint` | Використовується тільки як слабкий fallback |
+| Сигналів немає, але в backend одна installation | Використовується єдина installation |
+| Сигнали двозначні або їх недостатньо | Backend повертає HTTP 400 |
 
 Для multi-store сценарію POS також передає `poster.transactionId` окремо від технічного `poster.orderId`. Це важливо, бо у Poster `order.id` і видимий номер чека можуть не збігатися.
 

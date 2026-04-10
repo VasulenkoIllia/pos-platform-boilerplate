@@ -58,12 +58,17 @@ export const buildPosterOauthUrl = ({
     applicationId,
     redirectUri,
     oauthBaseUrl,
+    state,
 }) => {
     const params = new URLSearchParams({
         response_type: 'code',
         client_id: applicationId,
         redirect_uri: redirectUri,
     });
+
+    if (state) {
+        params.set('state', state);
+    }
 
     return `${oauthBaseUrl}?${params.toString()}`;
 };

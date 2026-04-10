@@ -7,6 +7,7 @@
 - кнопка `Shipday` у `functions` та `order`
 - `one-click send` із замовлення
 - fallback popup для ручного дозаповнення
+- сервісний `Shipday`-екран у `functions`
 - локальний browser preview з mock `Poster`
 - backend connect flow і Shipday proxy
 - account-level налаштування для Shipday
@@ -47,6 +48,8 @@ npm run deploy
 
 Скрипт збирає `bundle.js` і відправляє його через `application.uploadPOSPlatformBundle`.
 
+Важливо: `git push` або Render deploy не оновлюють POS bundle автоматично. Після frontend/POS-змін `bundle.js` треба заливати в Poster окремо.
+
 ## Що важливо
 
 Секрети не зберігаються в POS bundle.
@@ -55,6 +58,11 @@ npm run deploy
 
 - Shipday API key зберігається тільки в backend
 - POS bundle викликає тільки backend
+
+Поточна продуктова поведінка:
+
+- `Shipday` з `order` = відправка замовлення або fallback popup
+- `Shipday` з `functions` = сервісний вхід, статус і перехід у web settings
 
 ## Детальна документація
 
