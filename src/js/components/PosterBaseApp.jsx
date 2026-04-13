@@ -67,33 +67,53 @@ const getOrderId = (order) => {
     return order.id || order.orderId || null;
 };
 
+const normalizePosterOrderNumberCandidate = (value) => {
+    const normalizedValue = String(value || '').trim();
+
+    if (!normalizedValue) {
+        return '';
+    }
+
+    const extractedOrderNumber = normalizedValue.match(/(?:№|#)\s*([0-9]+)/u);
+
+    if (extractedOrderNumber && extractedOrderNumber[1]) {
+        return extractedOrderNumber[1].trim();
+    }
+
+    return normalizedValue.replace(/^№\s*/u, '').trim();
+};
+
 const getOrderNumber = (order) => {
-    const runtimeOrderNumber = String(getPosterOrderNumberHint() || '').trim();
+    if (!order) {
+        const runtimeOrderNumber = normalizePosterOrderNumberCandidate(getPosterOrderNumberHint());
+
+        return runtimeOrderNumber || null;
+    }
+
+    const orderCandidates = [
+        order.orderName,
+        order.order_name,
+        order.transactionNumber,
+        order.transaction_number,
+        order.orderNumber,
+        order.order_number,
+        order.number,
+        order.transactionId,
+        order.transaction_id,
+    ];
+
+    for (const candidate of orderCandidates) {
+        const normalizedCandidate = normalizePosterOrderNumberCandidate(candidate);
+
+        if (normalizedCandidate) {
+            return normalizedCandidate;
+        }
+    }
+
+    const runtimeOrderNumber = normalizePosterOrderNumberCandidate(getPosterOrderNumberHint());
 
     if (runtimeOrderNumber) {
         return runtimeOrderNumber;
-    }
-
-    if (!order) {
-        return null;
-    }
-
-    const candidate = (
-        order.orderName
-        || order.order_name
-        || order.transactionNumber
-        || order.transaction_number
-        || order.orderNumber
-        || order.order_number
-        || order.number
-        || order.transactionId
-        || order.transaction_id
-        || null
-    );
-    const normalizedCandidate = String(candidate || '').trim();
-
-    if (normalizedCandidate) {
-        return normalizedCandidate;
     }
 
     return null;
@@ -233,7 +253,10 @@ const getPosterModeBadgeClassName = (posterMode) => {
     return 'status-chip status-chip--warning';
 };
 
-const normalizeMoneyValue = (value) => {
+const normalizeMoneyValue = (value, {
+    scaleHint = 1,
+    allowHeuristicMinorUnits = true,
+} = {}) => {
     if (value === null || value === undefined || value === '') {
         return '';
     }
@@ -244,17 +267,276 @@ const normalizeMoneyValue = (value) => {
         return '';
     }
 
-    if (Number.isInteger(numericValue) && Math.abs(numericValue) >= 1000) {
+    if (Number.isInteger(numericValue) && scaleHint > 1) {
+        return (numericValue / scaleHint).toFixed(2);
+    }
+
+    if (
+        allowHeuristicMinorUnits
+        && Number.isInteger(numericValue)
+        && Math.abs(numericValue) >= 1000
+    ) {
         return (numericValue / 100).toFixed(2);
     }
 
     return numericValue.toFixed(2);
 };
 
-const normalizeMoneyNumber = (value) => {
-    const normalizedValue = normalizeMoneyValue(value);
+const normalizeMoneyNumber = (value, options) => {
+    const normalizedValue = normalizeMoneyValue(value, options);
 
     return normalizedValue ? Number(normalizedValue) : undefined;
+};
+
+const pickFirstMoneyValue = (candidates, options) => {
+    for (const candidate of candidates) {
+        const candidateValue = candidate && typeof candidate === 'object' && Object.prototype.hasOwnProperty.call(candidate, 'value')
+            ? candidate.value
+            : candidate;
+        const candidateOptions = candidate && typeof candidate === 'object' && candidate.options
+            ? {
+                ...(options || {}),
+                ...candidate.options,
+            }
+            : options;
+        const normalizedValue = normalizeMoneyValue(candidateValue, candidateOptions);
+
+        if (normalizedValue !== '') {
+            return normalizedValue;
+        }
+    }
+
+    return '';
+};
+
+const getOrderMoneyScale = (order) => {
+    if (!order || typeof order !== 'object') {
+        return 1;
+    }
+
+    const majorCandidates = [
+        order.total,
+        order.orderTotal,
+        order.total_price,
+    ].map(value => Number(value)).filter(Number.isFinite);
+    const minorCandidates = [
+        order.totalSum,
+    ].map(value => Number(value)).filter(Number.isFinite);
+
+    for (const minorValue of minorCandidates) {
+        if (!Number.isInteger(minorValue)) {
+            continue;
+        }
+
+        for (const majorValue of majorCandidates) {
+            if (!majorValue) {
+                continue;
+            }
+
+            const ratio = Math.abs(minorValue / majorValue);
+
+            if (Math.abs(ratio - 100) < 0.01) {
+                return 100;
+            }
+        }
+    }
+
+    return 1;
+};
+
+const getOrderItemProductId = (item) => {
+    if (!item || typeof item !== 'object') {
+        return '';
+    }
+
+    return String(
+        item.id
+        || item.productId
+        || item.product_id
+        || item.dishId
+        || item.dish_id
+        || '',
+    ).trim();
+};
+
+const getOrderItemDirectName = (item) => {
+    if (!item || typeof item !== 'object') {
+        return '';
+    }
+
+    return String(
+        item.product_name
+        || item.productName
+        || item.dish_name
+        || item.dishName
+        || item.fullName
+        || item.title
+        || item.name
+        || (item.product && (item.product.name || item.product.product_name))
+        || '',
+    ).trim();
+};
+
+const getOrderItemName = (item) => {
+    const directName = getOrderItemDirectName(item);
+
+    if (directName) {
+        return directName;
+    }
+
+    const productId = getOrderItemProductId(item);
+
+    return productId ? `Товар #${productId}` : '';
+};
+
+const getOrderItemQuantity = (item) => {
+    const quantity = Number(
+        item && (
+            item.quantity
+            || item.count
+            || item.num
+            || item.qty
+        ),
+    );
+
+    return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+};
+
+const getOrderItemUnitPrice = (item, moneyScale = 1) => {
+    const directUnitPrice = normalizeMoneyNumber(
+        item && (
+            item.unitPrice
+            || item.unit_price
+            || item.price
+        ),
+        {
+            allowHeuristicMinorUnits: false,
+        },
+    );
+    const quantity = getOrderItemQuantity(item);
+
+    const lineTotal = normalizeMoneyNumber(
+        item && (
+            item.productSum
+            || item.product_sum
+            || item.lineTotal
+            || item.line_total
+            || item.amount
+            || item.sum
+            || item.total
+        ),
+        {
+            scaleHint: moneyScale,
+        },
+    );
+
+    if (lineTotal === undefined) {
+        return directUnitPrice;
+    }
+
+    if (
+        directUnitPrice !== undefined
+        && moneyScale > 1
+        && Number.isFinite(directUnitPrice)
+        && Number.isFinite(lineTotal)
+    ) {
+        const scaledUnitPrice = Number((directUnitPrice / moneyScale).toFixed(2));
+        const directLineTotal = Number((directUnitPrice * quantity).toFixed(2));
+        const scaledLineTotal = Number((scaledUnitPrice * quantity).toFixed(2));
+
+        if (Math.abs(scaledLineTotal - lineTotal) <= 0.01 && Math.abs(directLineTotal - lineTotal) > 0.01) {
+            return scaledUnitPrice;
+        }
+    }
+
+    if (directUnitPrice !== undefined) {
+        return directUnitPrice;
+    }
+
+    return Number((lineTotal / quantity).toFixed(2));
+};
+
+const getDeliveryFeeFromObject = (value, {
+    moneyScale = 1,
+    includeNestedAliases = false,
+} = {}) => {
+    if (!value || typeof value !== 'object') {
+        return [];
+    }
+
+    return [
+        { value: value.deliveryFee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.delivery_fee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.deliveryPrice, options: { allowHeuristicMinorUnits: false } },
+        { value: value.delivery_price, options: { allowHeuristicMinorUnits: false } },
+        { value: value.deliveryCost, options: { allowHeuristicMinorUnits: false } },
+        { value: value.delivery_cost, options: { allowHeuristicMinorUnits: false } },
+        { value: value.deliverySum, options: { scaleHint: moneyScale } },
+        { value: value.delivery_sum, options: { scaleHint: moneyScale } },
+        { value: value.deliveryAmount, options: { scaleHint: moneyScale } },
+        { value: value.delivery_amount, options: { scaleHint: moneyScale } },
+        { value: value.shippingFee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shipping_fee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shippingPrice, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shipping_price, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shippingCost, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shipping_cost, options: { allowHeuristicMinorUnits: false } },
+        { value: value.shippingSum, options: { scaleHint: moneyScale } },
+        { value: value.shipping_sum, options: { scaleHint: moneyScale } },
+        { value: value.courierFee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.courier_fee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.deliveryServiceFee, options: { allowHeuristicMinorUnits: false } },
+        { value: value.delivery_service_fee, options: { allowHeuristicMinorUnits: false } },
+        includeNestedAliases ? { value: value.fee, options: { allowHeuristicMinorUnits: false } } : undefined,
+        includeNestedAliases ? { value: value.price, options: { allowHeuristicMinorUnits: false } } : undefined,
+        includeNestedAliases ? { value: value.cost, options: { allowHeuristicMinorUnits: false } } : undefined,
+        includeNestedAliases ? { value: value.sum, options: { scaleHint: moneyScale } } : undefined,
+        includeNestedAliases ? { value: value.amount, options: { scaleHint: moneyScale } } : undefined,
+    ];
+};
+
+const findDeliveryFee = (order) => {
+    const moneyScale = getOrderMoneyScale(order);
+    const directFee = pickFirstMoneyValue(getDeliveryFeeFromObject(order, {
+        moneyScale,
+    }));
+
+    if (directFee) {
+        return directFee;
+    }
+
+    return pickFirstMoneyValue(
+        [
+            getDeliveryFeeFromObject(order && order.deliveryInfo, { moneyScale, includeNestedAliases: true }),
+            getDeliveryFeeFromObject(order && order.delivery_info, { moneyScale, includeNestedAliases: true }),
+            getDeliveryFeeFromObject(order && order.delivery, { moneyScale, includeNestedAliases: true }),
+            getDeliveryFeeFromObject(order && order.shipping, { moneyScale, includeNestedAliases: true }),
+            getDeliveryFeeFromObject(order && order.deliveryService, { moneyScale, includeNestedAliases: true }),
+            getDeliveryFeeFromObject(order && order.delivery_service, { moneyScale, includeNestedAliases: true }),
+        ].flat(),
+    );
+};
+
+const findOrderTotal = (order) => {
+    const moneyScale = getOrderMoneyScale(order);
+
+    return pickFirstMoneyValue(
+        moneyScale > 1
+            ? [
+                { value: order && order.total, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.orderTotal, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.total_price, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.totalSum, options: { scaleHint: moneyScale } },
+                { value: order && order.sum, options: { allowHeuristicMinorUnits: false } },
+            ]
+            : [
+                { value: order && order.total, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.orderTotal, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.total_price, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.sum, options: { allowHeuristicMinorUnits: false } },
+                { value: order && order.totalSum, options: { scaleHint: moneyScale } },
+            ],
+    );
 };
 
 const findAddressString = (order) => {
@@ -301,8 +583,8 @@ const findProductsSummary = (order) => {
     }
 
     return products.map((item) => {
-        const name = item.product_name || item.name || 'Товар';
-        const quantity = item.count || item.quantity || item.num || 1;
+        const name = getOrderItemName(item) || 'Товар';
+        const quantity = getOrderItemQuantity(item);
 
         return `${name} x${quantity}`;
     }).join(', ');
@@ -316,18 +598,18 @@ const findShipdayItems = (order) => {
     }
 
     return products.map((item) => {
-        const name = String(item.product_name || item.name || '').trim();
+        const name = getOrderItemName(item);
 
         if (!name) {
             return null;
         }
 
-        const quantity = Number(item.count || item.quantity || item.num || 1);
-        const unitPrice = normalizeMoneyNumber(item.unitPrice || item.price);
+        const quantity = getOrderItemQuantity(item);
+        const unitPrice = getOrderItemUnitPrice(item, getOrderMoneyScale(order));
         const detail = String(item.comment || item.notes || '').trim();
         const normalizedItem = {
             name,
-            quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+            quantity,
         };
 
         if (unitPrice !== undefined) {
@@ -361,7 +643,8 @@ const buildShipdayDraft = (order) => {
         ) || '',
         orderItem: findProductsSummary(order),
         items: findShipdayItems(order),
-        orderTotal: normalizeMoneyValue(order && (order.totalSum || order.total || order.sum)),
+        orderTotal: findOrderTotal(order),
+        deliveryFee: findDeliveryFee(order),
     };
 };
 
@@ -387,6 +670,10 @@ const buildShipdayPayload = (draft) => {
 
     if (draft.orderTotal) {
         payload.totalOrderCost = Number(draft.orderTotal);
+    }
+
+    if (String(draft.deliveryFee || '').trim()) {
+        payload.deliveryFee = Number(draft.deliveryFee);
     }
 
     return payload;
@@ -461,6 +748,13 @@ const getMissingShipdayFields = (draft) => {
         missingFields.push('адреса доставки');
     }
 
+    if (
+        !String(draft.orderItem || '').trim()
+        && (!Array.isArray(draft.items) || !draft.items.length)
+    ) {
+        missingFields.push('позиції замовлення');
+    }
+
     return missingFields;
 };
 
@@ -530,6 +824,32 @@ const buildShipdaySuccessStatus = result => ({
     message: buildShipdaySuccessMessage(result),
     details: result,
 });
+
+const buildShipdayDuplicateStatus = ({
+    orderNumber,
+    response,
+}) => {
+    const existingOrder = response && response.existingOrder ? response.existingOrder : null;
+    const isPending = existingOrder && existingOrder.status === 'pending';
+
+    if (isPending) {
+        return {
+            state: 'sending',
+            label: 'Очікує підтвердження',
+            message: response.message || `Відправка замовлення ${orderNumber} ще перевіряється. Повторний запуск заблоковано.`,
+            details: response || null,
+        };
+    }
+
+    return {
+        state: 'success',
+        label: 'Вже відправлено',
+        message: response && response.message
+            ? response.message
+            : `Замовлення ${orderNumber} вже є в Shipday.`,
+        details: response || null,
+    };
+};
 
 const buildShipdayErrorStatus = (error) => {
     const responseIssues = error.response && Array.isArray(error.response.issues)
@@ -741,29 +1061,36 @@ class PosterBaseApp extends React.Component {
                 || (fallbackOrder && fallbackOrder.client && fallbackOrder.client.id)
                 || 0;
 
+            const sourceProducts = getOrderProducts(sourceOrder);
+            const productsToEnrich = sourceProducts.length
+                ? sourceProducts
+                : getOrderProducts(fallbackOrder);
+
             const [client, products] = await Promise.all([
                 clientId ? getPosterClient(clientId).catch(() => null) : Promise.resolve(null),
-                Promise.all(getOrderProducts(sourceOrder).map(async (item) => {
-                    if (item.product_name || item.name || !item.id) {
+                Promise.all(productsToEnrich.map(async (item) => {
+                    const productId = getOrderItemProductId(item);
+
+                    if (getOrderItemDirectName(item) || !productId) {
                         return item;
                     }
 
                     try {
                         const fullName = await getPosterProductFullName({
-                            id: item.id,
+                            id: productId,
                             modification: item.modification,
                         });
 
                         return {
                             ...item,
-                            name: fullName && fullName.name ? fullName.name : `Товар #${item.id}`,
-                            product_name: fullName && fullName.name ? fullName.name : `Товар #${item.id}`,
+                            name: fullName && fullName.name ? fullName.name : `Товар #${productId}`,
+                            product_name: fullName && fullName.name ? fullName.name : `Товар #${productId}`,
                         };
                     } catch (error) {
                         return {
                             ...item,
-                            name: `Товар #${item.id}`,
-                            product_name: `Товар #${item.id}`,
+                            name: `Товар #${productId}`,
+                            product_name: `Товар #${productId}`,
                         };
                     }
                 })),
@@ -791,6 +1118,9 @@ class PosterBaseApp extends React.Component {
                     ?? (fallbackOrder && fallbackOrder.sum)
                     ?? sourceOrder.total
                     ?? (fallbackOrder && fallbackOrder.total),
+                deliveryInfo: (sourceOrder.deliveryInfo != null
+                    ? sourceOrder.deliveryInfo
+                    : (fallbackOrder && fallbackOrder.deliveryInfo)) || undefined,
                 deliveryComment: sourceOrder.deliveryComment
                     || (sourceOrder.deliveryInfo && sourceOrder.deliveryInfo.comment)
                     || (fallbackOrder && fallbackOrder.deliveryComment)
@@ -846,7 +1176,11 @@ class PosterBaseApp extends React.Component {
         notify = false,
         openPopupOnError = false,
     } = {}) {
-        const { lastOrderSnapshot, posterAccountHint } = this.state;
+        const { lastOrderSnapshot, posterAccountHint, shipdayStatus: currentStatus } = this.state;
+
+        if (currentStatus && currentStatus.state === 'sending') {
+            return { ok: false, skipped: true };
+        }
 
         this.setState({
             shipdayDraft,
@@ -891,6 +1225,39 @@ class PosterBaseApp extends React.Component {
                 result,
             };
         } catch (error) {
+            if (error.response && error.response.duplicate) {
+                const duplicateStatus = buildShipdayDuplicateStatus({
+                    orderNumber: shipdayDraft.orderNumber,
+                    response: error.response,
+                });
+                const isPendingDuplicate = Boolean(
+                    error.response
+                    && error.response.existingOrder
+                    && error.response.existingOrder.status === 'pending',
+                );
+
+                this.setState({
+                    popupOpen: isPendingDuplicate,
+                    shipdayStatus: duplicateStatus,
+                });
+
+                if (notify) {
+                    showPosterNotification({
+                        title: APP_CONFIG.name,
+                        message: duplicateStatus.message,
+                    }).catch(() => null);
+                }
+
+                if (isPendingDuplicate && openPopupOnError) {
+                    this.openShipdayPopup({
+                        shipdayDraft,
+                        shipdayStatus: duplicateStatus,
+                    });
+                }
+
+                return { ok: !isPendingDuplicate, duplicate: true, pending: isPendingDuplicate };
+            }
+
             const shipdayStatus = buildShipdayErrorStatus(error);
 
             this.setState({
@@ -1274,6 +1641,17 @@ class PosterBaseApp extends React.Component {
                             className="form-control"
                             name="orderTotal"
                             value={shipdayDraft.orderTotal}
+                            onChange={this.handleShipdayDraftChange}
+                        />
+                    </label>
+
+                    <label className="shipday-form__field" htmlFor="shipday-delivery-fee">
+                        <span>Вартість доставки</span>
+                        <input
+                            id="shipday-delivery-fee"
+                            className="form-control"
+                            name="deliveryFee"
+                            value={shipdayDraft.deliveryFee}
                             onChange={this.handleShipdayDraftChange}
                         />
                     </label>

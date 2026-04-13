@@ -19,6 +19,7 @@ const buildMockOrder = () => ({
     orderId: 'DEV-1001',
     totalSum: 42500,
     total: 425,
+    deliveryFee: 5000,
     spotId: '1',
     clientId: 77,
     guestsCount: 2,
@@ -30,6 +31,7 @@ const buildMockOrder = () => ({
         city: 'Київ',
         address1: 'вул. Саксаганського, 15',
         address2: '',
+        deliveryFee: 5000,
         comment: 'Домофон 18, подзвонити за 5 хвилин.',
     },
     address: {

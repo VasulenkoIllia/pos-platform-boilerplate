@@ -121,6 +121,16 @@ const normalizePosterTransaction = (transaction) => {
 
     return {
         transactionId,
+        orderNumber: String(
+            transaction.order_number
+            || transaction.orderNumber
+            || transaction.transaction_number
+            || transaction.transactionNumber
+            || transaction.order_name
+            || transaction.orderName
+            || transaction.number
+            || '',
+        ).trim(),
         spotId: String(transaction.spot_id || transaction.spotId || '').trim(),
         clientId: String(transaction.client_id || transaction.clientId || '').trim(),
         clientPhone: String(transaction.client_phone || transaction.clientPhone || '').trim(),

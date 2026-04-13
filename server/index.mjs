@@ -38,6 +38,7 @@ import {
     getMockShipdayOrder,
     getShipdayOrder,
     normalizeShipdayOrderPayload,
+    ShipdayPayloadValidationError,
 } from './services/shipdayClient.mjs';
 
 const storage = await createStorage(config);
@@ -910,6 +911,87 @@ const isShipdayCreateConfirmed = (shipdayBody) => {
     return shipdayBody.success === true;
 };
 
+const isShipdayLookupConfirmed = shipdayResponse => Boolean(
+    shipdayResponse
+    && shipdayResponse.ok
+    && extractShipdayReference(shipdayResponse.body),
+);
+
+const isDefinitiveShipdayFailureStatus = status => Number.isInteger(status) && status >= 400 && status < 500;
+
+const lookupShipdayOrderByNumber = async ({
+    resolvedShipdayConfig,
+    orderNumber,
+}) => {
+    if (
+        !resolvedShipdayConfig
+        || resolvedShipdayConfig.mockMode
+        || !resolvedShipdayConfig.apiKey
+        || !normalizeText(orderNumber)
+    ) {
+        return null;
+    }
+
+    try {
+        const shipdayResponse = await getShipdayOrder({
+            apiBaseUrl: config.shipday.apiBaseUrl,
+            apiKey: resolvedShipdayConfig.apiKey,
+            authMode: resolvedShipdayConfig.authMode,
+            timeoutMs: config.shipday.timeoutMs,
+            orderNumber,
+        });
+
+        return isShipdayLookupConfirmed(shipdayResponse) ? shipdayResponse : null;
+    } catch (error) {
+        return null;
+    }
+};
+
+const reconcilePendingShipdaySend = async ({
+    liveSendAttempt,
+    resolvedShipdayConfig,
+    payload,
+}) => {
+    if (
+        !liveSendAttempt
+        || !liveSendAttempt.record
+        || liveSendAttempt.record.status !== 'pending'
+        || resolvedShipdayConfig.mockMode
+    ) {
+        return null;
+    }
+
+    const lookupResponse = await lookupShipdayOrderByNumber({
+        resolvedShipdayConfig,
+        orderNumber: payload.orderNumber,
+    });
+
+    if (!lookupResponse) {
+        return null;
+    }
+
+    try {
+        const updatedRecord = await orderLogStore.markSent(liveSendAttempt.record.id, {
+            shipdayOrderId: extractShipdayOrderId(lookupResponse.body) || null,
+            spotId: resolvedShipdayConfig.resolvedSpotId || null,
+            customerPhone: payload.customerPhoneNumber || null,
+            mockMode: false,
+        });
+
+        return {
+            record: updatedRecord || liveSendAttempt.record,
+            shipdayResponse: lookupResponse,
+        };
+    } catch (error) {
+        console.error('[order_log] Не вдалося завершити pending send після Shipday lookup:', error.message);
+
+        return {
+            record: liveSendAttempt.record,
+            shipdayResponse: lookupResponse,
+        };
+    }
+};
+
 export const createApp = () => {
     const app = express();
 
@@ -1416,6 +1498,7 @@ export const createApp = () => {
                 orderNumber: normalizeText(
                     rawPosterContext.orderNumber
                     || rawPosterContext.order_number
+                    || (posterTransaction && posterTransaction.orderNumber)
                     || (request.body.payload && request.body.payload.orderNumber)
                     || '',
                 ),
@@ -1464,62 +1547,210 @@ export const createApp = () => {
                 input: request.body,
                 defaultPickup: resolvedShipdayConfig.pickup,
             });
-            const shipdayResponse = resolvedShipdayConfig.mockMode
-                ? await createMockShipdayOrder({ payload })
-                : await createShipdayOrder({
-                    apiBaseUrl: config.shipday.apiBaseUrl,
-                    apiKey: resolvedShipdayConfig.apiKey,
-                    authMode: resolvedShipdayConfig.authMode,
-                    timeoutMs: config.shipday.timeoutMs,
+            const buildResponsePayload = (shipdayResponse, {
+                confirmed,
+                reconciled = false,
+            } = {}) => {
+                const reference = extractShipdayReference(shipdayResponse.body);
+                const shipdayOrderId = extractShipdayOrderId(shipdayResponse.body);
+
+                return {
+                    ok: shipdayResponse.ok && confirmed,
+                    account,
+                    mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
+                    httpStatus: shipdayResponse.status,
+                    confirmed,
+                    reconciled,
+                    reference: reference || null,
+                    shipdayOrderId: shipdayOrderId || null,
+                    resolvedConfig: {
+                        account,
+                        authMode: resolvedShipdayConfig.authMode,
+                        mockMode: resolvedShipdayConfig.mockMode,
+                        hasConfiguredApiKey: resolvedShipdayConfig.hasConfiguredApiKey,
+                        resolvedSpotId: resolvedShipdayConfig.resolvedSpotId || null,
+                    },
+                    posterContextResolved: {
+                        transactionId: posterContext.transactionId || null,
+                        orderNumber: posterContext.orderNumber || null,
+                        spotId: posterContext.spotId || null,
+                        spotName: posterContext.spotName || null,
+                        transactionLookupCandidates: requestOrderHints.transactionLookupCandidates,
+                        transactionLookupUsed: Boolean(posterTransaction),
+                    },
+                    requestPayload: payload,
+                    pickupSource: {
+                        spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                        posterSpot: resolvedShipdayConfig.posterSpot || null,
+                    },
+                    shipday: shipdayResponse.body,
+                };
+            };
+            const liveSendAttempt = resolvedShipdayConfig.mockMode
+                ? null
+                : await orderLogStore.createPendingIfAbsent({
+                    account,
+                    orderNumber: payload.orderNumber,
+                    spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                    customerPhone: payload.customerPhoneNumber || null,
+                    mockMode: false,
+                });
+
+            if (liveSendAttempt && !liveSendAttempt.created) {
+                const reconciledExistingSend = await reconcilePendingShipdaySend({
+                    liveSendAttempt,
+                    resolvedShipdayConfig,
                     payload,
                 });
+                const existingRecord = reconciledExistingSend && reconciledExistingSend.record
+                    ? reconciledExistingSend.record
+                    : liveSendAttempt.record;
+
+                response.status(409).json({
+                    ok: false,
+                    duplicate: true,
+                    account,
+                    orderNumber: payload.orderNumber,
+                    message: existingRecord.status === 'pending'
+                        ? 'Відправка цього замовлення в Shipday вже виконується або очікує підтвердження. Повторний запит заблоковано.'
+                        : 'Це замовлення вже було відправлено в Shipday. Повторне створення заблоковано.',
+                    existingOrder: {
+                        id: existingRecord.id,
+                        status: existingRecord.status,
+                        shipdayOrderId: existingRecord.shipdayOrderId || null,
+                        createdAt: existingRecord.createdAt || null,
+                        updatedAt: existingRecord.updatedAt || null,
+                    },
+                    reconciled: Boolean(reconciledExistingSend),
+                    shipday: reconciledExistingSend ? reconciledExistingSend.shipdayResponse.body : null,
+                    requestPayload: payload,
+                });
+                return;
+            }
+
+            let shipdayResponse;
+
+            try {
+                shipdayResponse = resolvedShipdayConfig.mockMode
+                    ? await createMockShipdayOrder({ payload })
+                    : await createShipdayOrder({
+                        apiBaseUrl: config.shipday.apiBaseUrl,
+                        apiKey: resolvedShipdayConfig.apiKey,
+                        authMode: resolvedShipdayConfig.authMode,
+                        timeoutMs: config.shipday.timeoutMs,
+                        payload,
+                    });
+            } catch (shipdayError) {
+                const reconciledSend = await reconcilePendingShipdaySend({
+                    liveSendAttempt,
+                    resolvedShipdayConfig,
+                    payload,
+                });
+
+                if (reconciledSend) {
+                    response.status(201).json({
+                        ...buildResponsePayload(reconciledSend.shipdayResponse, {
+                            confirmed: true,
+                            reconciled: true,
+                        }),
+                        message: 'Shipday підтвердив замовлення під час контрольної перевірки після неоднозначної відповіді create-запиту.',
+                    });
+                    return;
+                }
+
+                response.status(502).json({
+                    ok: false,
+                    account,
+                    mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
+                    duplicateGuard: liveSendAttempt ? 'pending' : 'not-used',
+                    message: 'Не вдалося отримати підтвердження від Shipday. Повторна відправка цього orderNumber тимчасово заблокована, щоб не створити дубль.',
+                    error: shipdayError.message,
+                    requestPayload: payload,
+                });
+                return;
+            }
+
             const confirmed = resolvedShipdayConfig.mockMode
                 ? true
                 : isShipdayCreateConfirmed(shipdayResponse.body);
-            const reference = extractShipdayReference(shipdayResponse.body);
             const shipdayOrderId = extractShipdayOrderId(shipdayResponse.body);
-            const responsePayload = {
-                ok: shipdayResponse.ok && confirmed,
-                account,
-                mode: resolvedShipdayConfig.mockMode ? 'mock' : 'live',
-                httpStatus: shipdayResponse.status,
+            const responsePayload = buildResponsePayload(shipdayResponse, {
                 confirmed,
-                reference: reference || null,
-                shipdayOrderId: shipdayOrderId || null,
-                resolvedConfig: {
-                    account,
-                    authMode: resolvedShipdayConfig.authMode,
-                    mockMode: resolvedShipdayConfig.mockMode,
-                    hasConfiguredApiKey: resolvedShipdayConfig.hasConfiguredApiKey,
-                    resolvedSpotId: resolvedShipdayConfig.resolvedSpotId || null,
-                },
-                posterContextResolved: {
-                    transactionId: posterContext.transactionId || null,
-                    orderNumber: posterContext.orderNumber || null,
-                    spotId: posterContext.spotId || null,
-                    spotName: posterContext.spotName || null,
-                    transactionLookupCandidates: requestOrderHints.transactionLookupCandidates,
-                    transactionLookupUsed: Boolean(posterTransaction),
-                },
-                requestPayload: payload,
-                pickupSource: {
-                    spotId: resolvedShipdayConfig.resolvedSpotId || null,
-                    posterSpot: resolvedShipdayConfig.posterSpot || null,
-                },
-                shipday: shipdayResponse.body,
-            };
+            });
 
             if (shipdayResponse.ok && !resolvedShipdayConfig.mockMode && !confirmed) {
+                const reconciledSend = await reconcilePendingShipdaySend({
+                    liveSendAttempt,
+                    resolvedShipdayConfig,
+                    payload,
+                });
+
+                if (reconciledSend) {
+                    response.status(201).json({
+                        ...buildResponsePayload(reconciledSend.shipdayResponse, {
+                            confirmed: true,
+                            reconciled: true,
+                        }),
+                        message: 'Shipday підтвердив замовлення під час контрольної перевірки після неоднозначної create-відповіді.',
+                    });
+                    return;
+                }
+
                 response.status(502).json({
                     ...responsePayload,
-                    message: 'Shipday відповів без явного підтвердження створення замовлення.',
+                    duplicateGuard: liveSendAttempt ? 'pending' : 'not-used',
+                    message: 'Shipday відповів без явного підтвердження створення замовлення. Повторна відправка цього orderNumber заблокована до ручної перевірки, щоб не створити дубль.',
                 });
                 return;
             }
 
             if (!shipdayResponse.ok) {
+                if (isDefinitiveShipdayFailureStatus(shipdayResponse.status) && liveSendAttempt && liveSendAttempt.record) {
+                    try {
+                        await orderLogStore.markFailed(liveSendAttempt.record.id, {
+                            failureMessage: (
+                                shipdayResponse.body
+                                && (
+                                    shipdayResponse.body.errorMessage
+                                    || shipdayResponse.body.message
+                                    || shipdayResponse.body.raw
+                                )
+                            ) || `Shipday повернув HTTP ${shipdayResponse.status}.`,
+                        });
+                    } catch (logError) {
+                        console.error('[order_log] Не вдалося позначити відправку як failed:', logError.message);
+                    }
+                }
+
+                if (!isDefinitiveShipdayFailureStatus(shipdayResponse.status)) {
+                    const reconciledSend = await reconcilePendingShipdaySend({
+                        liveSendAttempt,
+                        resolvedShipdayConfig,
+                        payload,
+                    });
+
+                    if (reconciledSend) {
+                        response.status(201).json({
+                            ...buildResponsePayload(reconciledSend.shipdayResponse, {
+                                confirmed: true,
+                                reconciled: true,
+                            }),
+                            message: 'Shipday підтвердив замовлення під час контрольної перевірки після неоднозначної помилки create-відповіді.',
+                        });
+                        return;
+                    }
+
+                    response.status(502).json({
+                        ...responsePayload,
+                        duplicateGuard: liveSendAttempt ? 'pending' : 'not-used',
+                        message: 'Shipday повернув неоднозначну помилку. Повторна відправка цього orderNumber тимчасово заблокована до перевірки, щоб не створити дубль.',
+                    });
+                    return;
+                }
+
                 response.status(shipdayResponse.status).json({
                     ...responsePayload,
+                    duplicateGuard: liveSendAttempt ? 'released' : 'not-used',
                     message: (
                         shipdayResponse.body
                         && (
@@ -1532,16 +1763,25 @@ export const createApp = () => {
                 return;
             }
 
-            // Зберігаємо orderNumber → account для подальшого пошуку по webhook / TurboSMS
+            // Зберігаємо orderNumber → account для dedupe, webhook / TurboSMS
             try {
-                await orderLogStore.save({
-                    account,
-                    orderNumber: payload.orderNumber,
-                    shipdayOrderId: shipdayOrderId || null,
-                    spotId: resolvedShipdayConfig.resolvedSpotId || null,
-                    customerPhone: payload.customerPhoneNumber || null,
-                    mockMode: resolvedShipdayConfig.mockMode,
-                });
+                if (liveSendAttempt && liveSendAttempt.record) {
+                    await orderLogStore.markSent(liveSendAttempt.record.id, {
+                        shipdayOrderId: shipdayOrderId || null,
+                        spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                        customerPhone: payload.customerPhoneNumber || null,
+                        mockMode: false,
+                    });
+                } else {
+                    await orderLogStore.save({
+                        account,
+                        orderNumber: payload.orderNumber,
+                        shipdayOrderId: shipdayOrderId || null,
+                        spotId: resolvedShipdayConfig.resolvedSpotId || null,
+                        customerPhone: payload.customerPhoneNumber || null,
+                        mockMode: resolvedShipdayConfig.mockMode,
+                    });
+                }
             } catch (logError) {
                 console.error('[order_log] Не вдалося зберегти запис:', logError.message);
             }
@@ -1702,6 +1942,15 @@ export const createApp = () => {
                 ok: false,
                 message: 'Невірний формат payload.',
                 issues: error.issues,
+            });
+            return;
+        }
+
+        if (error instanceof ShipdayPayloadValidationError) {
+            response.status(400).json({
+                ok: false,
+                message: error.message,
+                errors: error.details || [],
             });
             return;
         }

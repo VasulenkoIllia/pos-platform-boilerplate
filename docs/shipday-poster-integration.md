@@ -15,6 +15,7 @@
 - збереження налаштувань у Postgres.
 - live і mock режими для Shipday.
 - логування замовлень у `order_log` (`shipdayOrderId` / `orderNumber` → account).
+- dedupe-захист live-відправки по `account + orderNumber`, щоб не створювати дублікати в Shipday.
 - Shipday webhook endpoint з верифікацією token.
 - browser-session ізоляція settings page: користувач бачить тільки ті Poster акаунти, які сам підключив у поточному браузері через OAuth.
 - CSRF-захист Poster OAuth через `state`.
@@ -36,6 +37,7 @@
 - реєструє кнопку `Shipday` у `functions` і `order`
 - бере активне замовлення через Poster POS runtime
 - дотягує повний order, клієнта та назви позицій
+- витягує суму доставки з payload замовлення, якщо Poster її передав
 - збирає request до backend, передаючи і видимий `orderNumber`, і lookup-id для Poster transaction
 - з екрана `order` запускає відправку замовлення
 - з меню `functions` відкриває сервісний екран, а не ручну форму відправки
@@ -108,17 +110,42 @@ Backend автоматично:
 1. Касир відкриває замовлення доставки.
 2. Натискає кнопку `Shipday`.
 3. POS bundle збирає дані замовлення.
-4. Backend визначає акаунт і pickup spot.
-5. Backend формує Shipday request за docs.
-6. Backend відправляє `POST https://api.shipday.com/orders`.
-7. У касі показується результат.
+4. Для `orderNumber` bundle спочатку бере реальні поля замовлення (`orderName`, `transactionNumber`, `orderNumber`), а DOM-підказку Poster використовує тільки як fallback.
+5. Backend визначає акаунт і pickup spot.
+6. Backend формує Shipday request за docs.
+7. Backend відправляє `POST https://api.shipday.com/orders`.
+8. У касі показується результат.
+
+### Захист від дублікатів Shipday
+
+Для live mode backend не дозволяє повторно створити Shipday order з тим самим `orderNumber` у межах того самого Poster `account`.
+
+Flow:
+
+- після нормалізації payload backend перевіряє `order_log`
+- на рівні Postgres діє partial unique index для live-записів `account + orderNumber` зі статусами `pending/sent`
+- якщо вже є live-запис `pending` або `sent` для `account + orderNumber`, Shipday API не викликається
+- backend повертає HTTP `409 Conflict` з `duplicate: true`
+- якщо запису немає, backend створює `pending` перед викликом Shipday
+- після підтвердження Shipday запис переходить у `sent`
+- якщо Shipday повернув явну HTTP-помилку, запис переходить у `failed` і повтор можна зробити після виправлення даних
+
+Якщо Shipday не дав явного підтвердження, backend робить контрольний `GET /orders/:orderNumber`.
+
+- якщо Shipday уже бачить це замовлення, backend переводить запис у `sent`
+- якщо lookup теж неоднозначний, запис лишається `pending`
+- поки запис `pending`, повторний create-запит блокується
+
+Це навмисно: при timeout/network error невідомо, чи Shipday не створив order на своєму боці, тому автоматичний повтор може створити дубль.
+
+Mock mode не блокує live-відправку, бо mock не створює реальне замовлення в Shipday.
 
 ### Як backend визначає Poster account
 
 Для `POST /api/shipday/orders` backend використовує не один сигнал, а пріоритетний ланцюжок:
 
 1. lookup через Poster transaction по кількох lookup-кандидатах:
-   `transactionId`, `orderId`, видимий `orderNumber`
+   `transactionId`, `orderId`, нормалізований `orderNumber`
 2. визначення акаунта по Poster `spotId` або `spotName`, якщо transaction lookup не спрацював
 3. account із `Origin/Referer` `*.joinposter.com`
 4. явний `account hint` із POS request як слабкий fallback
@@ -158,6 +185,7 @@ Backend нормалізує запит у flat-структуру на кшта
   "pickupLatitude": 52.6257786,
   "pickupLongitude": 13.5026494,
   "totalOrderCost": 12.5,
+  "deliveryFee": 2.5,
   "deliveryInstruction": "debug",
   "orderSource": "Poster POS Service Bridge",
   "orderItem": [
@@ -174,7 +202,7 @@ Backend нормалізує запит у flat-структуру на кшта
 
 Основний mapping зараз такий:
 
-- `Poster order id` -> `orderNumber`
+- `Poster orderName / transactionNumber / orderNumber` -> `orderNumber`
 - `Poster client name` -> `customerName`
 - `Poster client phone` -> `customerPhoneNumber`
 - `Poster delivery address` -> `customerAddress`
@@ -183,7 +211,62 @@ Backend нормалізує запит у flat-структуру на кшта
 - `Poster spot lat/lng` -> `pickupLatitude/pickupLongitude`
 - `Poster items[]` -> `orderItem[]`
 - `Poster totalSum/total/sum` -> `totalOrderCost`
+- `Poster deliveryFee/delivery_fee/deliveryInfo.deliveryFee/...` -> `deliveryFee`
 - коментар доставки -> `deliveryInstruction`
+
+### Delivery fee
+
+В офіційній документації Poster для POS `Order` і Web `transactions.getTransactions` немає стабільного єдиного поля `deliveryFee`.
+У різних сценаріях вартість доставки може прийти як окреме поле в runtime payload або в delivery/shipping-блоці.
+
+Тому POS bundle зараз шукає delivery fee у таких кандидатах:
+
+- `deliveryFee`, `delivery_fee`
+- `deliveryPrice`, `delivery_price`
+- `deliveryCost`, `delivery_cost`
+- `deliverySum`, `delivery_sum`
+- `shippingFee`, `shipping_fee`
+- `shippingPrice`, `shipping_price`
+- `shippingCost`, `shipping_cost`
+- `courierFee`, `courier_fee`
+- ті самі поля всередині `deliveryInfo`, `delivery_info`, `delivery`, `shipping`, `deliveryService`
+
+Якщо значення знайдено, backend передає його в Shipday як `deliveryFee`.
+Якщо Poster не передав такого поля, `deliveryFee` не додається в Shipday payload.
+
+Нормалізація робить важливу відмінність:
+
+- поля типу `deliveryFee`, `deliveryPrice`, `deliveryCost` трактуються як сума в основній валюті
+- поля типу `deliverySum`, `deliveryAmount`, `shippingSum`, `amount`, `sum` можуть бути у minor units, тому scale береться з самого замовлення
+
+Тобто інтеграція не ділить усі цілі числа на `100` всліпу.
+
+### Чому Shipday може створити замовлення без товарів
+
+Таке можливо, якщо Shipday приймає `POST /orders`, але `orderItem` відсутній або прийшов у форматі, який Shipday не розпізнав.
+Щоб не створювати напівпорожні live-замовлення, backend тепер валідовує `orderItem` до виклику Shipday:
+
+- якщо POS не передав `products/items`
+- якщо всі позиції не мають назви і не мають `product_id/id`
+- якщо ручний fallback `orderItem` порожній
+
+backend поверне HTTP 400 і не викличе Shipday API.
+
+Нормалізація позицій підтримує такі формати:
+
+- назва: `name`, `productName`, `product_name`, `dishName`, `dish_name`, `fullName`, `title`
+- fallback назви: `Product #<product_id>` / `Товар #<id>`, якщо є тільки ідентифікатор
+- кількість: `quantity`, `count`, `num`, `qty`
+- ціна за одиницю: `unitPrice`, `unit_price`, `price`
+- fallback ціни: `productSum/product_sum/lineTotal/line_total/amount/sum/total` діляться на кількість
+- якщо `price` виглядає як minor units, але `lineTotal` підтверджує scale `100`, bundle автоматично переводить `price` у major units перед відправкою в Shipday
+
+У debug popup потрібно перевіряти:
+
+- `requestPayload.orderItem`
+- `requestPayload.deliveryFee`
+- `requestPayload.totalOrderCost`
+- `shipday` — фактичну відповідь Shipday
 
 ## Дані по точках
 
@@ -221,6 +304,8 @@ Backend нормалізує запит у flat-структуру на кшта
 - `defaultSpotId`
 - pickup mappings
 - лог відправлених замовлень: `orderNumber`, `account`, `shipdayOrderId`, `spotId`, `customerPhone`, `mockMode`
+- статус відправки: `pending`, `sent`, `failed`
+- для live-записів гарантується унікальність активної відправки по `account + orderNumber`
 
 Shipday API key зберігається зашифрованим.
 

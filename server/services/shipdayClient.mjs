@@ -127,11 +127,22 @@ const pickFirstNumber = (...values) => {
     return undefined;
 };
 
+export class ShipdayPayloadValidationError extends Error {
+    constructor(message, details = []) {
+        super(message);
+        this.name = 'ShipdayPayloadValidationError';
+        this.details = details;
+    }
+}
+
 const ensureRequiredText = (fieldName, value) => {
     const normalizedValue = normalizeText(value);
 
     if (!normalizedValue) {
-        throw new Error(`Shipday payload повинен містити ${fieldName}.`);
+        throw new ShipdayPayloadValidationError(
+            `Shipday payload повинен містити ${fieldName}.`,
+            [`Поле ${fieldName} не прийшло з POS bundle або було порожнім після нормалізації.`],
+        );
     }
 
     return normalizedValue;
@@ -158,19 +169,43 @@ const normalizeShipdayItem = (item) => {
         return null;
     }
 
-    const name = pickFirstText(item.name, item.product_name, item.title);
+    const productId = pickFirstText(item.productId, item.product_id, item.id);
+    const name = pickFirstText(
+        item.name,
+        item.productName,
+        item.product_name,
+        item.dishName,
+        item.dish_name,
+        item.fullName,
+        item.title,
+        item.product && (item.product.name || item.product.product_name),
+        productId ? `Product #${productId}` : undefined,
+    );
 
     if (!name) {
         return null;
     }
 
+    const quantity = pickFirstNumber(item.quantity, item.count, item.num, item.qty) || 1;
+    const directUnitPrice = pickFirstNumber(item.unitPrice, item.unit_price, item.price);
+    const lineTotal = pickFirstNumber(
+        item.productSum,
+        item.product_sum,
+        item.lineTotal,
+        item.line_total,
+        item.amount,
+        item.sum,
+        item.total,
+    );
+    const unitPrice = directUnitPrice !== undefined
+        ? directUnitPrice
+        : (lineTotal !== undefined ? Number((lineTotal / quantity).toFixed(2)) : undefined);
     const normalizedItem = {
         name,
-        quantity: pickFirstNumber(item.quantity, item.count, item.num) || 1,
+        quantity,
     };
-    const unitPrice = pickFirstNumber(item.unitPrice, item.price);
-    const addOns = normalizeText(item.addOns);
-    const detail = pickFirstText(item.detail, item.comment, item.notes);
+    const addOns = pickFirstText(item.addOns, item.add_ons);
+    const detail = pickFirstText(item.detail, item.comment, item.notes, item.note);
 
     if (unitPrice !== undefined) {
         normalizedItem.unitPrice = unitPrice;
@@ -250,6 +285,17 @@ export const normalizeShipdayOrderPayload = ({
     };
     const normalizedDelivery = normalizeLocation(parsed.delivery);
     const orderItems = normalizeShipdayItems(parsed);
+
+    if (!orderItems.length) {
+        throw new ShipdayPayloadValidationError(
+            'Shipday payload повинен містити хоча б одну позицію orderItem.',
+            [
+                'Poster не передав products/items або всі позиції не вдалося нормалізувати.',
+                'Перевір requestPayload.orderItem у debug popup перед повторною відправкою.',
+            ],
+        );
+    }
+
     const restaurantName = ensureRequiredText(
         'restaurantName',
         pickFirstText(parsed.restaurantName, normalizedPickup.name),
