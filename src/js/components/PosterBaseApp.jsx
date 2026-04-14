@@ -575,6 +575,65 @@ const findAddressString = (order) => {
     return '';
 };
 
+const parsePosterDeliveryDateTime = (value) => {
+    const text = String(value || '').trim();
+
+    if (!text) {
+        return null;
+    }
+
+    const posterFormatMatch = text.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})$/);
+
+    if (posterFormatMatch) {
+        return {
+            date: posterFormatMatch[1],
+            time: posterFormatMatch[2],
+        };
+    }
+
+    const isoDateMatch = text.match(/^(\d{4}-\d{2}-\d{2})/);
+    const isoTimeMatch = text.match(/T(\d{2}:\d{2}:\d{2})/);
+
+    if (isoDateMatch && isoTimeMatch) {
+        return {
+            date: isoDateMatch[1],
+            time: isoTimeMatch[1],
+        };
+    }
+
+    return null;
+};
+
+const findPosterDeliveryDateTime = (order) => {
+    if (!order || typeof order !== 'object') {
+        return null;
+    }
+
+    const candidates = [
+        order.delivery && order.delivery.time,
+        order.deliveryTime,
+        order.delivery_time,
+        order.requestedDeliveryTime,
+        order.requested_delivery_time,
+        order.deliveryInfo && order.deliveryInfo.time,
+        order.deliveryInfo && order.deliveryInfo.deliveryTime,
+        order.deliveryInfo && order.deliveryInfo.delivery_time,
+        order.delivery_info && order.delivery_info.time,
+        order.delivery_info && order.delivery_info.deliveryTime,
+        order.delivery_info && order.delivery_info.delivery_time,
+    ];
+
+    for (const candidate of candidates) {
+        const parsedDateTime = parsePosterDeliveryDateTime(candidate);
+
+        if (parsedDateTime) {
+            return parsedDateTime;
+        }
+    }
+
+    return null;
+};
+
 const findProductsSummary = (order) => {
     const products = getOrderProducts(order);
 
@@ -626,6 +685,7 @@ const findShipdayItems = (order) => {
 
 const buildShipdayDraft = (order) => {
     const draftOrderNumber = getOrderNumber(order) || getOrderId(order) || `MANUAL-${Date.now()}`;
+    const deliveryDateTime = findPosterDeliveryDateTime(order);
 
     return {
         orderNumber: String(draftOrderNumber),
@@ -645,6 +705,8 @@ const buildShipdayDraft = (order) => {
         items: findShipdayItems(order),
         orderTotal: findOrderTotal(order),
         deliveryFee: findDeliveryFee(order),
+        expectedDeliveryDate: deliveryDateTime ? deliveryDateTime.date : '',
+        expectedDeliveryTime: deliveryDateTime ? deliveryDateTime.time : '',
     };
 };
 
@@ -674,6 +736,14 @@ const buildShipdayPayload = (draft) => {
 
     if (String(draft.deliveryFee || '').trim()) {
         payload.deliveryFee = Number(draft.deliveryFee);
+    }
+
+    if (String(draft.expectedDeliveryDate || '').trim()) {
+        payload.expectedDeliveryDate = String(draft.expectedDeliveryDate).trim();
+    }
+
+    if (String(draft.expectedDeliveryTime || '').trim()) {
+        payload.expectedDeliveryTime = String(draft.expectedDeliveryTime).trim();
     }
 
     return payload;
@@ -890,6 +960,7 @@ class PosterBaseApp extends React.Component {
             posterMode: getPosterMode(),
             runtimeLabel: getRuntimeLabel(environment),
             serviceStatus: INITIAL_SERVICE_STATUS,
+            shipdayConfirmVisible: false,
             shipdayDraft: buildShipdayDraft(null),
             shipdayStatus: INITIAL_SHIPDAY_STATUS,
         };
@@ -902,6 +973,8 @@ class PosterBaseApp extends React.Component {
         this.handleMockOrderClick = this.handleMockOrderClick.bind(this);
         this.handleMockRuntimeChange = this.handleMockRuntimeChange.bind(this);
         this.handlePopupClosed = this.handlePopupClosed.bind(this);
+        this.handleShipdayConfirm = this.handleShipdayConfirm.bind(this);
+        this.handleShipdayConfirmCancel = this.handleShipdayConfirmCancel.bind(this);
         this.refreshStatus = this.refreshStatus.bind(this);
         this.handleShipdayDraftChange = this.handleShipdayDraftChange.bind(this);
         this.handleShipdaySend = this.handleShipdaySend.bind(this);
@@ -951,6 +1024,7 @@ class PosterBaseApp extends React.Component {
             lastOrderSnapshot: order,
             popupOpen: false,
             posterAccountHint: getPosterAccountHint(),
+            shipdayConfirmVisible: false,
             shipdayDraft: buildShipdayDraft(order),
             shipdayStatus: INITIAL_SHIPDAY_STATUS,
         });
@@ -973,14 +1047,16 @@ class PosterBaseApp extends React.Component {
         if (missingFields.length) {
             this.openShipdayPopup({
                 shipdayDraft,
+                shipdayConfirmVisible: false,
                 shipdayStatus: buildMissingFieldsStatus(missingFields),
             });
             return;
         }
 
-        await this.sendShipdayDraft(shipdayDraft, {
-            notify: true,
-            openPopupOnError: true,
+        this.openShipdayPopup({
+            shipdayDraft,
+            shipdayConfirmVisible: true,
+            shipdayStatus: INITIAL_SHIPDAY_STATUS,
         });
     }
 
@@ -991,6 +1067,7 @@ class PosterBaseApp extends React.Component {
 
         this.setState({
             popupOpen: false,
+            shipdayConfirmVisible: false,
         });
     }
 
@@ -1149,12 +1226,14 @@ class PosterBaseApp extends React.Component {
 
     openShipdayPopup({
         shipdayDraft,
+        shipdayConfirmVisible = false,
         shipdayStatus = INITIAL_SHIPDAY_STATUS,
     }) {
         openPosterPopup(buildResponsivePopupOptions());
 
         this.setState({
             popupOpen: true,
+            shipdayConfirmVisible,
             shipdayDraft,
             shipdayStatus,
         });
@@ -1210,6 +1289,7 @@ class PosterBaseApp extends React.Component {
 
             this.setState({
                 popupOpen: false,
+                shipdayConfirmVisible: false,
                 shipdayStatus,
             });
 
@@ -1238,6 +1318,7 @@ class PosterBaseApp extends React.Component {
 
                 this.setState({
                     popupOpen: isPendingDuplicate,
+                    shipdayConfirmVisible: false,
                     shipdayStatus: duplicateStatus,
                 });
 
@@ -1261,6 +1342,7 @@ class PosterBaseApp extends React.Component {
             const shipdayStatus = buildShipdayErrorStatus(error);
 
             this.setState({
+                shipdayConfirmVisible: false,
                 shipdayStatus,
             });
 
@@ -1291,12 +1373,37 @@ class PosterBaseApp extends React.Component {
 
         if (missingFields.length) {
             this.setState({
+                shipdayConfirmVisible: false,
                 shipdayStatus: buildMissingFieldsStatus(missingFields),
             });
             return;
         }
 
-        await this.sendShipdayDraft(shipdayDraft);
+        this.setState({
+            shipdayConfirmVisible: true,
+            shipdayStatus: INITIAL_SHIPDAY_STATUS,
+        });
+    }
+
+    async handleShipdayConfirm() {
+        const { shipdayDraft } = this.state;
+
+        await this.sendShipdayDraft(shipdayDraft, {
+            notify: true,
+            openPopupOnError: true,
+        });
+    }
+
+    handleShipdayConfirmCancel() {
+        this.setState({
+            shipdayConfirmVisible: false,
+            shipdayStatus: {
+                state: 'idle',
+                label: 'Скасовано',
+                message: 'Відправку в Shipday скасовано.',
+                details: null,
+            },
+        });
     }
 
     async refreshStatus() {
@@ -1411,6 +1518,58 @@ class PosterBaseApp extends React.Component {
         );
     }
 
+    renderShipdayConfirmCard() {
+        const { shipdayDraft, shipdayStatus } = this.state;
+
+        return (
+            <section className="shipday-confirm">
+                <div className="shipday-confirm__header">
+                    <h2>Підтвердження відправки</h2>
+                    <p>Ви точно хочете відправити замовлення за адресою?</p>
+                </div>
+
+                <div className="shipday-confirm__address">
+                    {shipdayDraft.deliveryAddress || 'Адреса доставки не заповнена'}
+                </div>
+
+                {shipdayDraft.expectedDeliveryDate && shipdayDraft.expectedDeliveryTime && (
+                    <div className="shipday-confirm__meta">
+                        Час доставки з Poster:
+                        {' '}
+                        {shipdayDraft.expectedDeliveryDate}
+                        {' '}
+                        {shipdayDraft.expectedDeliveryTime}
+                    </div>
+                )}
+
+                <div className="shipday-confirm__actions">
+                    <button
+                        type="button"
+                        className="btn btn-success"
+                        onClick={this.handleShipdayConfirm}
+                        disabled={shipdayStatus.state === 'sending'}
+                    >
+                        Так
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={this.handleShipdayConfirmCancel}
+                        disabled={shipdayStatus.state === 'sending'}
+                    >
+                        Ні
+                    </button>
+                </div>
+
+                {shipdayStatus.message && (
+                    <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
+                        {shipdayStatus.message}
+                    </span>
+                )}
+            </section>
+        );
+    }
+
     renderFunctionsHub() {
         const {
             isRefreshing,
@@ -1506,6 +1665,7 @@ class PosterBaseApp extends React.Component {
             posterMode,
             runtimeLabel,
             serviceStatus,
+            shipdayConfirmVisible,
             shipdayDraft,
             shipdayStatus,
         } = this.state;
@@ -1577,115 +1737,137 @@ class PosterBaseApp extends React.Component {
                     </div>
                 )}
 
-                <div className="shipday-form">
-                    <label className="shipday-form__field" htmlFor="shipday-order-number">
-                        <span>Order number</span>
-                        <input
-                            id="shipday-order-number"
-                            className="form-control"
-                            name="orderNumber"
-                            value={shipdayDraft.orderNumber}
-                            onChange={this.handleShipdayDraftChange}
-                            readOnly={isRealMode && isOrderLaunch}
-                        />
-                    </label>
+                {shipdayConfirmVisible ? (
+                    this.renderShipdayConfirmCard()
+                ) : (
+                    <>
+                        <div className="shipday-form">
+                            <label className="shipday-form__field" htmlFor="shipday-order-number">
+                                <span>Order number</span>
+                                <input
+                                    id="shipday-order-number"
+                                    className="form-control"
+                                    name="orderNumber"
+                                    value={shipdayDraft.orderNumber}
+                                    onChange={this.handleShipdayDraftChange}
+                                    readOnly={isRealMode && isOrderLaunch}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field" htmlFor="shipday-customer-name">
-                        <span>Клієнт</span>
-                        <input
-                            id="shipday-customer-name"
-                            className="form-control"
-                            name="customerName"
-                            value={shipdayDraft.customerName}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            <label className="shipday-form__field" htmlFor="shipday-customer-name">
+                                <span>Клієнт</span>
+                                <input
+                                    id="shipday-customer-name"
+                                    className="form-control"
+                                    name="customerName"
+                                    value={shipdayDraft.customerName}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field" htmlFor="shipday-customer-phone">
-                        <span>Телефон</span>
-                        <input
-                            id="shipday-customer-phone"
-                            className="form-control"
-                            name="customerPhone"
-                            value={shipdayDraft.customerPhone}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            <label className="shipday-form__field" htmlFor="shipday-customer-phone">
+                                <span>Телефон</span>
+                                <input
+                                    id="shipday-customer-phone"
+                                    className="form-control"
+                                    name="customerPhone"
+                                    value={shipdayDraft.customerPhone}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-address">
-                        <span>Адреса доставки</span>
-                        <input
-                            id="shipday-delivery-address"
-                            className="form-control"
-                            name="deliveryAddress"
-                            value={shipdayDraft.deliveryAddress}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-address">
+                                <span>Адреса доставки</span>
+                                <input
+                                    id="shipday-delivery-address"
+                                    className="form-control"
+                                    name="deliveryAddress"
+                                    value={shipdayDraft.deliveryAddress}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
-                        <span>Позиції замовлення</span>
-                        <input
-                            id="shipday-order-item"
-                            className="form-control"
-                            name="orderItem"
-                            value={shipdayDraft.orderItem}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            {(shipdayDraft.expectedDeliveryDate || shipdayDraft.expectedDeliveryTime) && (
+                                <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-time">
+                                    <span>Час доставки з Poster</span>
+                                    <input
+                                        id="shipday-delivery-time"
+                                        className="form-control"
+                                        name="deliveryDateTime"
+                                        value={[
+                                            shipdayDraft.expectedDeliveryDate,
+                                            shipdayDraft.expectedDeliveryTime,
+                                        ].filter(Boolean).join(' ')}
+                                        readOnly
+                                    />
+                                </label>
+                            )}
 
-                    <label className="shipday-form__field" htmlFor="shipday-order-total">
-                        <span>Сума</span>
-                        <input
-                            id="shipday-order-total"
-                            className="form-control"
-                            name="orderTotal"
-                            value={shipdayDraft.orderTotal}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-order-item">
+                                <span>Позиції замовлення</span>
+                                <input
+                                    id="shipday-order-item"
+                                    className="form-control"
+                                    name="orderItem"
+                                    value={shipdayDraft.orderItem}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field" htmlFor="shipday-delivery-fee">
-                        <span>Вартість доставки</span>
-                        <input
-                            id="shipday-delivery-fee"
-                            className="form-control"
-                            name="deliveryFee"
-                            value={shipdayDraft.deliveryFee}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
+                            <label className="shipday-form__field" htmlFor="shipday-order-total">
+                                <span>Сума</span>
+                                <input
+                                    id="shipday-order-total"
+                                    className="form-control"
+                                    name="orderTotal"
+                                    value={shipdayDraft.orderTotal}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                    <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
-                        <span>Інструкція курʼєру</span>
-                        <input
-                            id="shipday-delivery-instruction"
-                            className="form-control"
-                            name="deliveryInstruction"
-                            value={shipdayDraft.deliveryInstruction}
-                            onChange={this.handleShipdayDraftChange}
-                        />
-                    </label>
-                </div>
+                            <label className="shipday-form__field" htmlFor="shipday-delivery-fee">
+                                <span>Вартість доставки</span>
+                                <input
+                                    id="shipday-delivery-fee"
+                                    className="form-control"
+                                    name="deliveryFee"
+                                    value={shipdayDraft.deliveryFee}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
 
-                <div className={isRealMode ? 'shipday-form__actions' : 'mock-controls'}>
-                    <button
-                        type="button"
-                        className="btn btn-success"
-                        onClick={this.handleShipdaySend}
-                        disabled={shipdayStatus.state === 'sending'}
-                    >
-                        {shipdayActionLabel}
-                    </button>
-                    {shipdayStatus.message && (
-                        <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
-                            {shipdayStatus.message}
-                        </span>
-                    )}
-                    {this.renderShipdayStatusAction()}
-                </div>
+                            <label className="shipday-form__field shipday-form__field--full" htmlFor="shipday-delivery-instruction">
+                                <span>Інструкція курʼєру</span>
+                                <input
+                                    id="shipday-delivery-instruction"
+                                    className="form-control"
+                                    name="deliveryInstruction"
+                                    value={shipdayDraft.deliveryInstruction}
+                                    onChange={this.handleShipdayDraftChange}
+                                />
+                            </label>
+                        </div>
 
-                {this.renderShipdayDetails()}
+                        <div className={isRealMode ? 'shipday-form__actions' : 'mock-controls'}>
+                            <button
+                                type="button"
+                                className="btn btn-success"
+                                onClick={this.handleShipdaySend}
+                                disabled={shipdayStatus.state === 'sending'}
+                            >
+                                {shipdayActionLabel}
+                            </button>
+                            {shipdayStatus.message && (
+                                <span className={`shipday-form__status shipday-form__status--${shipdayStatus.state}`}>
+                                    {shipdayStatus.message}
+                                </span>
+                            )}
+                            {this.renderShipdayStatusAction()}
+                        </div>
+
+                        {this.renderShipdayDetails()}
+                    </>
+                )}
             </section>
         );
 

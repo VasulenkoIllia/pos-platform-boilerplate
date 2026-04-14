@@ -34,6 +34,10 @@ const buildMockOrder = () => ({
         deliveryFee: 5000,
         comment: 'Домофон 18, подзвонити за 5 хвилин.',
     },
+    delivery: {
+        deliveryPrice: 5000,
+        time: '2026-04-14 18:30:00',
+    },
     address: {
         address1: 'вул. Саксаганського, 15',
         city: 'Київ',

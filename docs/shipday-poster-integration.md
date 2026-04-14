@@ -5,7 +5,7 @@
 ## Що вже працює
 
 - POS-кнопка `Shipday` у касі Poster.
-- `one-click send` з екрана замовлення.
+- confirm popup перед реальною відправкою з екрана замовлення.
 - сервісний екран `Shipday` у `functions`.
 - fallback popup, якщо для відправки бракує клієнта, телефону або адреси.
 - Poster OAuth connect flow.
@@ -39,7 +39,8 @@
 - дотягує повний order, клієнта та назви позицій
 - витягує суму доставки з payload замовлення, якщо Poster її передав
 - збирає request до backend, передаючи і видимий `orderNumber`, і lookup-id для Poster transaction
-- з екрана `order` запускає відправку замовлення
+- з екрана `order` спочатку показує confirm popup з адресою доставки
+- передає час доставки з Poster у Shipday, якщо Poster віддав `delivery.time`
 - з меню `functions` відкриває сервісний екран, а не ручну форму відправки
 - показує fallback popup тільки якщо не вистачає полів
 - на будь-якій помилці order-flow відкриває popup з debug-відповіддю від backend/Shipday і переходом у settings
@@ -111,10 +112,12 @@ Backend автоматично:
 2. Натискає кнопку `Shipday`.
 3. POS bundle збирає дані замовлення.
 4. Для `orderNumber` bundle спочатку бере реальні поля замовлення (`orderName`, `transactionNumber`, `orderNumber`), а DOM-підказку Poster використовує тільки як fallback.
-5. Backend визначає акаунт і pickup spot.
-6. Backend формує Shipday request за docs.
-7. Backend відправляє `POST https://api.shipday.com/orders`.
-8. У касі показується результат.
+5. Якщо для відправки вистачає обов'язкових полів, касир бачить confirm popup:
+   `Ви точно хочете відправити замовлення за адресою?`
+6. Після підтвердження backend визначає акаунт і pickup spot.
+7. Backend формує Shipday request за docs.
+8. Backend відправляє `POST https://api.shipday.com/orders`.
+9. У касі показується результат.
 
 ### Захист від дублікатів Shipday
 
@@ -212,6 +215,7 @@ Backend нормалізує запит у flat-структуру на кшта
 - `Poster items[]` -> `orderItem[]`
 - `Poster totalSum/total/sum` -> `totalOrderCost`
 - `Poster deliveryFee/delivery_fee/deliveryInfo.deliveryFee/...` -> `deliveryFee`
+- `Poster delivery.time` -> `expectedDeliveryDate` + `expectedDeliveryTime`
 - коментар доставки -> `deliveryInstruction`
 
 ### Delivery fee
@@ -233,6 +237,24 @@ Backend нормалізує запит у flat-структуру на кшта
 
 Якщо значення знайдено, backend передає його в Shipday як `deliveryFee`.
 Якщо Poster не передав такого поля, `deliveryFee` не додається в Shipday payload.
+
+### Delivery time
+
+Згідно з документацією Poster для доставки використовується поле `delivery.time` у форматі `YYYY-MM-DD hh:mm:ss`.
+
+POS bundle зараз шукає час доставки в таких кандидатах:
+
+- `delivery.time` — основне джерело за документацією Poster
+- `deliveryTime`, `delivery_time`
+- `requestedDeliveryTime`, `requested_delivery_time`
+- `deliveryInfo.time`, `deliveryInfo.deliveryTime`
+
+Якщо значення знайдено, bundle передає в backend:
+
+- `expectedDeliveryDate`
+- `expectedDeliveryTime`
+
+Тобто Shipday отримує той самий час доставки, який уже був указаний у Poster, без довільного перерахунку ETA на нашому боці.
 
 Нормалізація робить важливу відмінність:
 

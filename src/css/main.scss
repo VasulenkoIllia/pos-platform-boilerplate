@@ -371,6 +371,51 @@ html, html body {
         color: #0d8b58;
     }
 
+    .shipday-confirm {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .shipday-confirm__header {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+
+        h2 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.2;
+        }
+
+        p {
+            margin: 0;
+            color: #5c6978;
+        }
+    }
+
+    .shipday-confirm__address {
+        padding: 14px 16px;
+        border: 1px solid rgba(36, 80, 122, 0.14);
+        border-radius: 14px;
+        background: #f7fafc;
+        color: #22313f;
+        font-size: 15px;
+        line-height: 1.5;
+        font-weight: 600;
+    }
+
+    .shipday-confirm__meta {
+        color: #5c6978;
+        font-size: 14px;
+    }
+
+    .shipday-confirm__actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
     .mock-runtime-picker .btn {
         min-width: 104px;
     }
@@ -397,7 +442,8 @@ html, html body {
         .mock-controls,
         .mock-runtime-picker,
         .shipday-form__actions,
-        .shipday-form {
+        .shipday-form,
+        .shipday-confirm__actions {
             flex-direction: column;
             align-items: flex-start;
         }
