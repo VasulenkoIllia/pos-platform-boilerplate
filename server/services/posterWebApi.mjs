@@ -60,6 +60,14 @@ const normalizeFloat = (value) => {
     return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeText = (value) => String(value || '').trim();
+
+const buildNameFromParts = (...parts) => parts
+    .map(part => normalizeText(part))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
 const normalizePosterSpot = (spot) => {
     const spotId = String(spot && (spot.spot_id || spot.spotId || spot.id) || '').trim();
 
@@ -133,12 +141,43 @@ const normalizePosterTransaction = (transaction) => {
         ).trim(),
         spotId: String(transaction.spot_id || transaction.spotId || '').trim(),
         clientId: String(transaction.client_id || transaction.clientId || '').trim(),
+        clientName: normalizeText(
+            transaction.client_name
+            || transaction.clientName
+            || transaction.customerName
+            || transaction.customer_name
+            || buildNameFromParts(
+                transaction.client_firstname,
+                transaction.client_lastname,
+            )
+            || buildNameFromParts(
+                transaction.clientFirstName,
+                transaction.clientLastName,
+            )
+            || buildNameFromParts(
+                transaction.first_name,
+                transaction.last_name,
+            ),
+        ),
         clientPhone: String(transaction.client_phone || transaction.clientPhone || '').trim(),
+        clientEmail: normalizeText(
+            transaction.client_email
+            || transaction.clientEmail
+            || transaction.email,
+        ),
         deliveryAddress: [
+            transaction.delivery && transaction.delivery.country,
             transaction.delivery && transaction.delivery.city,
             transaction.delivery && transaction.delivery.address1,
             transaction.delivery && transaction.delivery.address2,
+            transaction.delivery && transaction.delivery.zip_code,
         ].filter(Boolean).join(', ').trim(),
+        deliveryComment: normalizeText(
+            (transaction.delivery && transaction.delivery.comment)
+            || transaction.delivery_comment
+            || transaction.deliveryComment
+            || transaction.transaction_comment,
+        ),
         deliveryTime: String(
             (transaction.delivery && (
                 transaction.delivery.delivery_time

@@ -114,6 +114,31 @@ const maskToken = (token) => {
 
 const normalizeAccount = value => String(value || '').trim();
 const normalizeText = value => String(value || '').trim();
+const normalizeAddressText = (value) => {
+    if (!value) {
+        return '';
+    }
+
+    if (typeof value === 'string') {
+        return normalizeText(value);
+    }
+
+    if (typeof value !== 'object') {
+        return '';
+    }
+
+    return [
+        value.country,
+        value.city,
+        value.street,
+        value.address1,
+        value.address2,
+        value.additionalInfo,
+        value.comment,
+        value.zip_code,
+        value.zipCode,
+    ].map(normalizeText).filter(Boolean).join(', ');
+};
 const normalizeComparableText = value => normalizeText(value).toLowerCase().replace(/\s+/g, ' ');
 const normalizePhone = value => String(value || '').replace(/[^\d+]/g, '');
 const collectUniqueNormalizedValues = values => Array.from(new Set(
@@ -566,11 +591,74 @@ const buildShipdayInputWithPosterFallbacks = ({
     }
 
     const rawPayload = getRequestShipdayPayload(request);
-
-    if (hasPayloadDeliverySchedule(rawPayload)) {
-        return request.body;
-    }
-
+    const payloadUpdates = {};
+    const fallbackCustomerName = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.clientName
+            || (posterTransaction.raw && (
+                posterTransaction.raw.client_name
+                || posterTransaction.raw.clientName
+                || posterTransaction.raw.customerName
+                || [
+                    posterTransaction.raw.client_firstname,
+                    posterTransaction.raw.client_lastname,
+                ].filter(Boolean).join(' ')
+                || [
+                    posterTransaction.raw.first_name,
+                    posterTransaction.raw.last_name,
+                ].filter(Boolean).join(' ')
+            ))
+        ),
+    );
+    const fallbackCustomerPhone = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.clientPhone
+            || (posterTransaction.raw && (
+                posterTransaction.raw.client_phone
+                || posterTransaction.raw.clientPhone
+                || posterTransaction.raw.phone
+            ))
+        ),
+    );
+    const fallbackCustomerEmail = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.clientEmail
+            || (posterTransaction.raw && (
+                posterTransaction.raw.client_email
+                || posterTransaction.raw.clientEmail
+                || posterTransaction.raw.email
+            ))
+        ),
+    );
+    const fallbackCustomerAddress = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.deliveryAddress
+            || (posterTransaction.raw
+                && posterTransaction.raw.delivery
+                && normalizeAddressText(posterTransaction.raw.delivery))
+            || (posterTransaction.raw && (
+                posterTransaction.raw.delivery_address
+                || posterTransaction.raw.deliveryAddress
+                || normalizeAddressText(posterTransaction.raw.address)
+            ))
+        ),
+    );
+    const fallbackDeliveryComment = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.deliveryComment
+            || (posterTransaction.raw && (
+                posterTransaction.raw.transaction_comment
+                || posterTransaction.raw.delivery_comment
+                || posterTransaction.raw.deliveryComment
+                || (posterTransaction.raw.delivery && posterTransaction.raw.delivery.comment)
+            ))
+        ),
+    );
     const fallbackDeliveryTime = normalizeText(
         posterTransaction
         && (
@@ -585,7 +673,31 @@ const buildShipdayInputWithPosterFallbacks = ({
         ),
     );
 
-    if (!fallbackDeliveryTime) {
+    if (!normalizeText(rawPayload.customerName) && fallbackCustomerName) {
+        payloadUpdates.customerName = fallbackCustomerName;
+    }
+
+    if (!normalizeText(rawPayload.customerPhoneNumber || rawPayload.customerPhone) && fallbackCustomerPhone) {
+        payloadUpdates.customerPhoneNumber = fallbackCustomerPhone;
+    }
+
+    if (!normalizeText(rawPayload.customerEmail) && fallbackCustomerEmail) {
+        payloadUpdates.customerEmail = fallbackCustomerEmail;
+    }
+
+    if (!normalizeText(rawPayload.customerAddress || rawPayload.deliveryAddress) && fallbackCustomerAddress) {
+        payloadUpdates.customerAddress = fallbackCustomerAddress;
+    }
+
+    if (!normalizeText(rawPayload.deliveryInstruction) && fallbackDeliveryComment) {
+        payloadUpdates.deliveryInstruction = fallbackDeliveryComment;
+    }
+
+    if (!hasPayloadDeliverySchedule(rawPayload) && fallbackDeliveryTime) {
+        payloadUpdates.requestedDeliveryTime = fallbackDeliveryTime;
+    }
+
+    if (!Object.keys(payloadUpdates).length) {
         return request.body;
     }
 
@@ -593,7 +705,7 @@ const buildShipdayInputWithPosterFallbacks = ({
         ...request.body,
         payload: {
             ...rawPayload,
-            requestedDeliveryTime: fallbackDeliveryTime,
+            ...payloadUpdates,
         },
     };
 };

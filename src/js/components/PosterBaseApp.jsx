@@ -133,16 +133,40 @@ const getPosterTransactionLookupId = (order) => {
     ).trim();
 };
 
+const pickFirstTextValue = (...values) => {
+    for (const value of values) {
+        if (value === undefined || value === null) {
+            continue;
+        }
+
+        const normalizedValue = String(value).trim();
+
+        if (normalizedValue) {
+            return normalizedValue;
+        }
+    }
+
+    return '';
+};
+
+const buildNameFromParts = (...parts) => parts
+    .map(part => pickFirstTextValue(part))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
 const buildClientName = (client) => {
     if (!client) {
         return '';
     }
 
-    if (client.name) {
-        return client.name;
-    }
-
-    return [client.firstname, client.lastname].filter(Boolean).join(' ').trim();
+    return pickFirstTextValue(
+        client.name,
+        client.fullName,
+        buildNameFromParts(client.firstname, client.lastname),
+        buildNameFromParts(client.firstName, client.lastName),
+        buildNameFromParts(client.first_name, client.last_name),
+    );
 };
 
 const findCustomerPhone = (order) => {
@@ -151,11 +175,47 @@ const findCustomerPhone = (order) => {
     }
 
     return String(
-        (order.client && order.client.phone)
-        || (order.deliveryInfo && order.deliveryInfo.phone)
-        || order.clientPhone
-        || order.phone
-        || '',
+        pickFirstTextValue(
+            order.client && (
+                order.client.phone
+                || order.client.phoneNumber
+                || order.client.phone_number
+            ),
+            order.deliveryInfo && (
+                order.deliveryInfo.phone
+                || order.deliveryInfo.phoneNumber
+                || order.deliveryInfo.phone_number
+                || order.deliveryInfo.customerPhone
+                || order.deliveryInfo.clientPhone
+            ),
+            order.delivery && (
+                order.delivery.phone
+                || order.delivery.phoneNumber
+                || order.delivery.phone_number
+                || order.delivery.customerPhone
+            ),
+            order.incomingOrder && (
+                order.incomingOrder.phone
+                || (order.incomingOrder.client && (
+                    order.incomingOrder.client.phone
+                    || order.incomingOrder.client.phoneNumber
+                    || order.incomingOrder.client.phone_number
+                ))
+            ),
+            order.incoming_order && (
+                order.incoming_order.phone
+                || (order.incoming_order.client && (
+                    order.incoming_order.client.phone
+                    || order.incoming_order.client.phoneNumber
+                    || order.incoming_order.client.phone_number
+                ))
+            ),
+            order.clientPhone,
+            order.client_phone,
+            order.phone,
+            order.phoneNumber,
+            order.phone_number,
+        ),
     ).trim();
 };
 
@@ -165,11 +225,29 @@ const findCustomerEmail = (order) => {
     }
 
     return String(
-        (order.client && order.client.email)
-        || (order.deliveryInfo && order.deliveryInfo.email)
-        || order.clientEmail
-        || order.email
-        || '',
+        pickFirstTextValue(
+            order.client && order.client.email,
+            order.deliveryInfo && (
+                order.deliveryInfo.email
+                || order.deliveryInfo.customerEmail
+                || order.deliveryInfo.clientEmail
+            ),
+            order.delivery && (
+                order.delivery.email
+                || order.delivery.customerEmail
+            ),
+            order.incomingOrder && (
+                order.incomingOrder.email
+                || (order.incomingOrder.client && order.incomingOrder.client.email)
+            ),
+            order.incoming_order && (
+                order.incoming_order.email
+                || (order.incoming_order.client && order.incoming_order.client.email)
+            ),
+            order.clientEmail,
+            order.client_email,
+            order.email,
+        ),
     ).trim();
 };
 
@@ -185,10 +263,39 @@ const findCustomerName = (order) => {
     }
 
     return String(
-        order.customerName
-        || order.client_name
-        || order.clientName
-        || '',
+        pickFirstTextValue(
+            order.customerName,
+            order.client_name,
+            order.clientName,
+            order.customer_name,
+            buildNameFromParts(order.firstName, order.lastName),
+            buildNameFromParts(order.firstname, order.lastname),
+            buildNameFromParts(order.first_name, order.last_name),
+            order.deliveryInfo && (
+                order.deliveryInfo.name
+                || buildNameFromParts(order.deliveryInfo.firstName, order.deliveryInfo.lastName)
+                || buildNameFromParts(order.deliveryInfo.firstname, order.deliveryInfo.lastname)
+                || buildNameFromParts(order.deliveryInfo.first_name, order.deliveryInfo.last_name)
+            ),
+            order.delivery && (
+                order.delivery.name
+                || buildNameFromParts(order.delivery.firstName, order.delivery.lastName)
+                || buildNameFromParts(order.delivery.firstname, order.delivery.lastname)
+                || buildNameFromParts(order.delivery.first_name, order.delivery.last_name)
+            ),
+            order.incomingOrder && (
+                buildClientName(order.incomingOrder.client)
+                || buildNameFromParts(order.incomingOrder.firstName, order.incomingOrder.lastName)
+                || buildNameFromParts(order.incomingOrder.firstname, order.incomingOrder.lastname)
+                || buildNameFromParts(order.incomingOrder.first_name, order.incomingOrder.last_name)
+            ),
+            order.incoming_order && (
+                buildClientName(order.incoming_order.client)
+                || buildNameFromParts(order.incoming_order.firstName, order.incoming_order.lastName)
+                || buildNameFromParts(order.incoming_order.firstname, order.incoming_order.lastname)
+                || buildNameFromParts(order.incoming_order.first_name, order.incoming_order.last_name)
+            ),
+        ),
     ).trim();
 };
 
@@ -539,40 +646,76 @@ const findOrderTotal = (order) => {
     );
 };
 
+const buildAddressString = (value) => {
+    if (!value) {
+        return '';
+    }
+
+    if (typeof value === 'string') {
+        return value.trim();
+    }
+
+    if (typeof value !== 'object') {
+        return '';
+    }
+
+    return [
+        value.country,
+        value.city,
+        value.street,
+        value.address1,
+        value.address2,
+        value.additionalInfo,
+        value.comment,
+        value.zip_code,
+        value.zipCode,
+    ].filter(Boolean).join(', ').trim();
+};
+
 const findAddressString = (order) => {
     if (!order) {
         return '';
     }
 
     if (order.deliveryInfo && typeof order.deliveryInfo === 'object') {
-        return [
-            order.deliveryInfo.city,
-            order.deliveryInfo.address1,
-            order.deliveryInfo.address2,
-        ].filter(Boolean).join(', ');
+        const deliveryInfoAddress = buildAddressString(order.deliveryInfo)
+            || pickFirstTextValue(order.deliveryInfo.address, order.deliveryInfo.formattedAddress);
+
+        if (deliveryInfoAddress) {
+            return deliveryInfoAddress;
+        }
     }
 
     if (typeof order.delivery_address === 'string') {
         return order.delivery_address;
     }
 
+    if (order.delivery && typeof order.delivery === 'object') {
+        const deliveryAddress = buildAddressString(order.delivery)
+            || pickFirstTextValue(order.delivery.address, order.delivery.formattedAddress);
+
+        if (deliveryAddress) {
+            return deliveryAddress;
+        }
+    }
+
     if (typeof order.address === 'string') {
         return order.address;
     }
 
-    if (order.address && typeof order.address === 'object') {
-        return [
-            order.address.address1,
-            order.address.address2,
-            order.address.city,
-        ].filter(Boolean).join(', ');
-    }
-
-    if (order.client && typeof order.client.address === 'string') {
-        return order.client.address;
-    }
-
-    return '';
+    return pickFirstTextValue(
+        buildAddressString(order.address),
+        order.client && buildAddressString(order.client.address),
+        order.incomingOrder && buildAddressString(order.incomingOrder.address),
+        order.incoming_order && buildAddressString(order.incoming_order.address),
+        order.address1 && buildAddressString({
+            country: order.country,
+            city: order.city,
+            address1: order.address1,
+            address2: order.address2,
+            zip_code: order.zip_code,
+        }),
+    );
 };
 
 const parsePosterDeliveryDateTime = (value) => {
@@ -1175,18 +1318,61 @@ class PosterBaseApp extends React.Component {
                 })),
             ]);
 
+            const sourceClient = sourceOrder && sourceOrder.client && typeof sourceOrder.client === 'object'
+                ? sourceOrder.client
+                : null;
+            const fallbackClient = fallbackOrder && fallbackOrder.client && typeof fallbackOrder.client === 'object'
+                ? fallbackOrder.client
+                : null;
+            let hydratedClient = null;
+
+            if (client) {
+                hydratedClient = {
+                    ...fallbackClient,
+                    ...sourceClient,
+                    ...client,
+                    name: buildClientName(client)
+                        || buildClientName(sourceClient)
+                        || buildClientName(fallbackClient),
+                    phone: pickFirstTextValue(
+                        client.phone,
+                        client.phoneNumber,
+                        client.phone_number,
+                        sourceClient && (
+                            sourceClient.phone
+                            || sourceClient.phoneNumber
+                            || sourceClient.phone_number
+                        ),
+                        fallbackClient && (
+                            fallbackClient.phone
+                            || fallbackClient.phoneNumber
+                            || fallbackClient.phone_number
+                        ),
+                    ),
+                    email: pickFirstTextValue(
+                        client.email,
+                        sourceClient && sourceClient.email,
+                        fallbackClient && fallbackClient.email,
+                    ),
+                    address: pickFirstTextValue(
+                        buildAddressString(client.address),
+                        buildAddressString(sourceClient && sourceClient.address),
+                        buildAddressString(fallbackClient && fallbackClient.address),
+                    ),
+                };
+            } else if (sourceClient || fallbackClient) {
+                hydratedClient = {
+                    ...fallbackClient,
+                    ...sourceClient,
+                };
+            }
+
             const normalizedOrder = {
                 ...(fallbackOrder || {}),
                 ...sourceOrder,
                 id: getOrderId(sourceOrder) || getOrderId(fallbackOrder),
                 orderId: getOrderId(sourceOrder) || getOrderId(fallbackOrder),
-                client: client
-                    ? {
-                        ...client,
-                        name: buildClientName(client),
-                        phone: client.phone || '',
-                    }
-                    : (fallbackOrder && fallbackOrder.client) || null,
+                client: hydratedClient,
                 products,
                 total: sourceOrder.total ?? (fallbackOrder && fallbackOrder.total),
                 totalSum: sourceOrder.totalSum

@@ -221,6 +221,50 @@ Backend нормалізує запит у flat-структуру на кшта
 - `Poster delivery.time` -> `expectedDeliveryDate` + `expectedDeliveryTime` через UTC-конвертацію
 - коментар доставки -> `deliveryInstruction`
 
+### Client data
+
+Для звичайних замовлень POS bundle читає клієнта з `order.client`.
+Для зовнішніх / online / aggregator замовлень Poster може віддати ті самі дані в інших структурах, тому mapping тепер покриває кілька джерел.
+
+POS bundle шукає ім'я клієнта в таких кандидатах:
+
+- `order.client.name`, `order.client.fullName`
+- `order.client.firstname/lastname`
+- `order.client.firstName/lastName`
+- `order.client.first_name/last_name`
+- `order.customerName`, `order.clientName`, `order.client_name`, `order.customer_name`
+- `order.deliveryInfo.name` і `deliveryInfo.firstName/lastName`
+- `order.delivery.name` і `delivery.firstName/lastName`
+- `order.incomingOrder.client` або `order.incoming_order.client`
+- `order.incomingOrder.first_name/last_name`
+
+Телефон шукається в:
+
+- `order.client.phone`, `phoneNumber`, `phone_number`
+- `order.deliveryInfo.phone`, `phoneNumber`, `customerPhone`, `clientPhone`
+- `order.delivery.phone`, `phoneNumber`, `customerPhone`
+- `order.incomingOrder.phone` / `order.incoming_order.phone`
+- `order.clientPhone`, `order.client_phone`, `order.phone`, `order.phoneNumber`, `order.phone_number`
+
+Адреса шукається в:
+
+- `deliveryInfo.city/address1/address2`
+- `delivery.city/address1/address2`
+- `delivery_address`
+- `address` як string або object
+- `client.address`
+- `incomingOrder.address`
+- top-level `country/city/address1/address2`
+
+Backend також доповнює payload із Poster Web API `dash.getTransaction`, якщо POS runtime не дав частину полів:
+
+- `client_firstname/client_lastname` -> `customerName`
+- `client_phone` -> `customerPhoneNumber`
+- `delivery.country/city/address1/address2/zip_code` -> `customerAddress`
+- `transaction_comment` або `delivery.comment` -> `deliveryInstruction`
+
+Це важливо для зовнішніх сервісів, де чек або друкована форма показують дані клієнта, але вони не завжди лежать у звичайному `order.client`.
+
 ### Delivery fee
 
 В офіційній документації Poster для POS `Order` і Web `transactions.getTransactions` немає стабільного єдиного поля `deliveryFee`.
