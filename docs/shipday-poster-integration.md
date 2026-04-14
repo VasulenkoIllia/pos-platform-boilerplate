@@ -6,6 +6,7 @@
 
 - POS-кнопка `Shipday` у касі Poster.
 - confirm popup перед реальною відправкою з екрана замовлення.
+- компактний confirm popup з адресою доставки і кнопками підтвердження.
 - сервісний екран `Shipday` у `functions`.
 - fallback popup, якщо для відправки бракує клієнта, телефону або адреси.
 - Poster OAuth connect flow.
@@ -41,7 +42,7 @@
 - читає scheduled delivery time з POS payload, а якщо його там немає, backend дотягує `delivery.delivery_time` через Poster Web API
 - збирає request до backend, передаючи і видимий `orderNumber`, і lookup-id для Poster transaction
 - з екрана `order` спочатку показує confirm popup з адресою доставки
-- передає час доставки з Poster у Shipday, якщо Poster віддав `delivery.time`
+- передає scheduled delivery time з Poster у Shipday
 - з меню `functions` відкриває сервісний екран, а не ручну форму відправки
 - показує fallback popup тільки якщо не вистачає полів
 - на будь-якій помилці order-flow відкриває popup з debug-відповіддю від backend/Shipday і переходом у settings
@@ -115,10 +116,11 @@ Backend автоматично:
 4. Для `orderNumber` bundle спочатку бере реальні поля замовлення (`orderName`, `transactionNumber`, `orderNumber`), а DOM-підказку Poster використовує тільки як fallback.
 5. Якщо для відправки вистачає обов'язкових полів, касир бачить confirm popup:
    `Ви точно хочете відправити замовлення за адресою?`
-6. Після підтвердження backend визначає акаунт і pickup spot.
-7. Backend формує Shipday request за docs.
-8. Backend відправляє `POST https://api.shipday.com/orders`.
-9. У касі показується результат.
+6. У popup показується фактична адреса доставки, кнопки `Так` і `Ні`.
+7. Після підтвердження backend визначає акаунт і pickup spot.
+8. Backend формує Shipday request за docs.
+9. Backend відправляє `POST https://api.shipday.com/orders`.
+10. У касі показується результат.
 
 ### Захист від дублікатів Shipday
 
@@ -437,6 +439,15 @@ POS Platform має бути увімкнена.
 
 POS відкриє popup і попросить дозаповнити поля вручну.
 
+### Scheduled delivery test
+
+1. Створи `preorder` або delivery order із майбутнім часом доставки в Poster.
+2. Відправ його через кнопку `Shipday`.
+3. У Shipday перевір:
+   - `Req. Delivery Time` відповідає часу з Poster
+   - це не fallback `час створення + 30 хв`
+   - `Order placed` і `Req. Delivery Time` не збігаються, якщо замовлення справді заплановане на пізніше
+
 ## Shipday Webhook
 
 Backend приймає Shipday webhook на:
@@ -518,6 +529,19 @@ Webhook приймає всі події Shipday. Поточний статус 
 - сирий `shipday` response
 
 Це головний спосіб зрозуміти, що саме реально пішло в Shipday.
+
+### Якщо Shipday показує `Req. Delivery Time = Order placed + 30 хв`
+
+Це не проблема timezone-конвертації. Це означає інше: scheduled delivery time не потрапив у Shipday request, і Shipday поставив свій fallback.
+
+У такому випадку треба дивитися:
+
+- `requestPayload.expectedDeliveryDate`
+- `requestPayload.expectedDeliveryTime`
+- `posterContextResolved.deliveryTime`
+
+Якщо `posterContextResolved.deliveryTime` є, а `requestPayload.expectedDeliveryDate/expectedDeliveryTime` порожні, значить проблема в мапінгу payload до Shipday.
+Якщо `posterContextResolved.deliveryTime` теж порожній, значить Poster не віддав scheduled time в POS runtime і backend fallback через Web API теж його не знайшов.
 
 ## Поведінка при відсутньому або невідомому account hint
 

@@ -5,12 +5,14 @@
 ## Що вже реалізовано
 
 - кнопка `Shipday` у `functions` та `order`
-- `one-click send` із замовлення
+- confirm popup перед реальною відправкою із замовлення
 - fallback popup для ручного дозаповнення
 - сервісний `Shipday`-екран у `functions`
 - локальний browser preview з mock `Poster`
 - backend connect flow і Shipday proxy
 - account-level налаштування для Shipday
+- підтримка scheduled delivery time з Poster
+- dedupe live-відправки по `account + orderNumber`
 
 ## Швидкий старт
 
@@ -61,9 +63,10 @@ npm run deploy
 
 Поточна продуктова поведінка:
 
-- `Shipday` з `order` = відправка замовлення або fallback popup
+- `Shipday` з `order` = confirm popup, а вже після підтвердження відправка замовлення або fallback popup
   з debug і переходом у settings, якщо backend повернув помилку
 - `Shipday` з `functions` = сервісний вхід, статус і перехід у web settings
+- scheduled delivery time для preorder/delivery замовлень передається в Shipday; якщо POS runtime не дав цей час, backend бере його з Poster Web API `delivery.delivery_time`
 
 ## Детальна документація
 

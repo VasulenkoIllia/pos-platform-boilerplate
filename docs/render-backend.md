@@ -11,6 +11,7 @@
 - settings page
 - sync Poster spots
 - Shipday proxy
+- fallback lookup scheduled delivery time через Poster Web API
 - health/debug endpoints
 - browser-session isolation для settings page
 
@@ -84,6 +85,7 @@ https://poster-shipday-bridge.onrender.com
 - тримай web service і Postgres в одному регіоні
 - після увімкнення Postgres ще раз пройди `Під’єднати`, якщо раніше дані були тільки у file-store
 - після `git push` Render оновлює тільки backend; POS bundle треба переливати в Poster окремо через `npm run deploy`
+- якщо мінялась логіка scheduled delivery, confirm popup або збір payload у POS, одного Render deploy недостатньо: потрібен і backend deploy, і новий `npm run deploy`
 
 ## Що вписати в Poster Developer
 
@@ -122,3 +124,10 @@ npm run deploy
 Цього достатньо, щоб кнопка `Shipday` у касі працювала.
 
 `Default Poster spot` потрібен тільки як fallback. Якщо backend зможе визначити реальну точку замовлення через POS `spotId` або Poster transaction lookup, саме вона піде в Shipday.
+
+## Що перевірити після деплою
+
+1. `GET /health` повертає `storage.driver = postgres`.
+2. Settings page відкривається тільки для акаунтів, підключених через OAuth у поточному браузері.
+3. Звичайне delivery order і preorder order успішно йдуть у Shipday.
+4. У preorder Shipday показує реальний `Req. Delivery Time`, а не fallback `created at + 30 min`.
