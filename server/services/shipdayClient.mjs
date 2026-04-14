@@ -4,6 +4,8 @@ const FlexibleOrderSchema = z.object({
     orderNumber: z.union([z.string(), z.number()]),
 }).passthrough();
 
+const DEFAULT_POSTER_TIME_ZONE = process.env.POSTER_DEFAULT_TIME_ZONE || 'Europe/Kiev';
+
 const readJsonResponse = async (response) => {
     const text = await response.text();
 
@@ -103,6 +105,190 @@ const normalizeTimeValue = (value) => {
     return timeMatch ? timeMatch[1] : undefined;
 };
 
+const parseDateParts = (value) => {
+    const normalizedValue = normalizeText(value);
+
+    if (!normalizedValue) {
+        return null;
+    }
+
+    const match = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        year: Number(match[1]),
+        month: Number(match[2]),
+        day: Number(match[3]),
+    };
+};
+
+const parseTimeParts = (value) => {
+    const normalizedValue = normalizeText(value);
+
+    if (!normalizedValue) {
+        return null;
+    }
+
+    const match = normalizedValue.match(/^(\d{2}):(\d{2}):(\d{2})$/);
+
+    if (!match) {
+        return null;
+    }
+
+    return {
+        hour: Number(match[1]),
+        minute: Number(match[2]),
+        second: Number(match[3]),
+    };
+};
+
+const getDateTimePartsInTimeZone = (date, timeZone) => {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+    });
+
+    return formatter.formatToParts(date).reduce((accumulator, part) => {
+        if (part.type !== 'literal') {
+            accumulator[part.type] = part.value;
+        }
+
+        return accumulator;
+    }, {});
+};
+
+const getTimeZoneOffsetMs = (date, timeZone) => {
+    const parts = getDateTimePartsInTimeZone(date, timeZone);
+    const asUtc = Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day),
+        Number(parts.hour),
+        Number(parts.minute),
+        Number(parts.second),
+    );
+
+    return asUtc - date.getTime();
+};
+
+const convertLocalDateTimeToUtcDate = ({
+    date,
+    time,
+    timeZone,
+}) => {
+    const dateParts = parseDateParts(date);
+    const timeParts = parseTimeParts(time);
+
+    if (!dateParts || !timeParts) {
+        return null;
+    }
+
+    const naiveUtcMillis = Date.UTC(
+        dateParts.year,
+        dateParts.month - 1,
+        dateParts.day,
+        timeParts.hour,
+        timeParts.minute,
+        timeParts.second,
+    );
+
+    let utcMillis = naiveUtcMillis;
+
+    for (let iteration = 0; iteration < 3; iteration += 1) {
+        const offsetMs = getTimeZoneOffsetMs(new Date(utcMillis), timeZone);
+        const resolvedUtcMillis = naiveUtcMillis - offsetMs;
+
+        if (resolvedUtcMillis === utcMillis) {
+            break;
+        }
+
+        utcMillis = resolvedUtcMillis;
+    }
+
+    return new Date(utcMillis);
+};
+
+const buildUtcDeliverySchedule = ({
+    expectedDeliveryDate,
+    expectedDeliveryTime,
+    requestedDeliveryTime,
+    timeZone,
+}) => {
+    const normalizedExplicitDate = normalizeDateValue(expectedDeliveryDate);
+    const normalizedExplicitTime = normalizeTimeValue(expectedDeliveryTime);
+
+    if (normalizedExplicitDate && normalizedExplicitTime) {
+        const utcDate = convertLocalDateTimeToUtcDate({
+            date: normalizedExplicitDate,
+            time: normalizedExplicitTime,
+            timeZone,
+        });
+
+        if (!utcDate || Number.isNaN(utcDate.getTime())) {
+            return {
+                expectedDeliveryDate: normalizedExplicitDate,
+                expectedDeliveryTime: normalizedExplicitTime,
+            };
+        }
+
+        return {
+            expectedDeliveryDate: utcDate.toISOString().slice(0, 10),
+            expectedDeliveryTime: utcDate.toISOString().slice(11, 19),
+        };
+    }
+
+    const normalizedRequestedDate = normalizeDateValue(requestedDeliveryTime);
+    const normalizedRequestedTime = normalizeTimeValue(requestedDeliveryTime);
+
+    if (normalizedRequestedDate && normalizedRequestedTime) {
+        const rawRequestedText = normalizeText(requestedDeliveryTime) || '';
+        const hasExplicitUtcOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(rawRequestedText);
+
+        if (hasExplicitUtcOffset) {
+            const parsedRequestedDate = new Date(rawRequestedText);
+
+            if (!Number.isNaN(parsedRequestedDate.getTime())) {
+                return {
+                    expectedDeliveryDate: parsedRequestedDate.toISOString().slice(0, 10),
+                    expectedDeliveryTime: parsedRequestedDate.toISOString().slice(11, 19),
+                };
+            }
+        }
+
+        const utcDate = convertLocalDateTimeToUtcDate({
+            date: normalizedRequestedDate,
+            time: normalizedRequestedTime,
+            timeZone,
+        });
+
+        if (!utcDate || Number.isNaN(utcDate.getTime())) {
+            return {
+                expectedDeliveryDate: normalizedRequestedDate,
+                expectedDeliveryTime: normalizedRequestedTime,
+            };
+        }
+
+        return {
+            expectedDeliveryDate: utcDate.toISOString().slice(0, 10),
+            expectedDeliveryTime: utcDate.toISOString().slice(11, 19),
+        };
+    }
+
+    return {
+        expectedDeliveryDate: normalizedExplicitDate || normalizedRequestedDate,
+        expectedDeliveryTime: normalizedExplicitTime || normalizedRequestedTime,
+    };
+};
+
 const pickFirstText = (...values) => {
     for (const value of values) {
         const normalizedValue = normalizeText(value);
@@ -159,6 +345,7 @@ const normalizeLocation = (location) => {
         formattedAddress: normalizeText(location.formattedAddress),
         phone: normalizeText(location.phone),
         email: normalizeText(location.email),
+        timeZone: pickFirstText(location.timeZone, location.time_zone, location.timezone),
         lat: normalizeNumber(location.lat),
         lng: normalizeNumber(location.lng),
     };
@@ -285,6 +472,15 @@ export const normalizeShipdayOrderPayload = ({
     };
     const normalizedDelivery = normalizeLocation(parsed.delivery);
     const orderItems = normalizeShipdayItems(parsed);
+    const posterTimeZone = pickFirstText(
+        parsed.posterTimeZone,
+        parsed.poster_time_zone,
+        parsed.timeZone,
+        parsed.time_zone,
+        normalizedPickup.timeZone,
+        defaultPickup && defaultPickup.timeZone,
+        DEFAULT_POSTER_TIME_ZONE,
+    ) || DEFAULT_POSTER_TIME_ZONE;
 
     if (!orderItems.length) {
         throw new ShipdayPayloadValidationError(
@@ -321,6 +517,12 @@ export const normalizeShipdayOrderPayload = ({
         'customerPhoneNumber',
         pickFirstText(parsed.customerPhoneNumber, parsed.customerPhone, normalizedDelivery.phone),
     );
+    const deliverySchedule = buildUtcDeliverySchedule({
+        expectedDeliveryDate: parsed.expectedDeliveryDate,
+        expectedDeliveryTime: parsed.expectedDeliveryTime,
+        requestedDeliveryTime: parsed.requestedDeliveryTime,
+        timeZone: posterTimeZone,
+    });
 
     const normalizedPayload = removeEmptyValues({
         orderNumber: String(parsed.orderNumber).trim(),
@@ -331,9 +533,9 @@ export const normalizeShipdayOrderPayload = ({
         restaurantName,
         restaurantAddress,
         restaurantPhoneNumber: pickFirstText(parsed.restaurantPhoneNumber, normalizedPickup.phone),
-        expectedDeliveryDate: normalizeDateValue(parsed.expectedDeliveryDate || parsed.requestedDeliveryTime),
+        expectedDeliveryDate: deliverySchedule.expectedDeliveryDate,
         expectedPickupTime: normalizeTimeValue(parsed.expectedPickupTime || parsed.requestedPickupTime),
-        expectedDeliveryTime: normalizeTimeValue(parsed.expectedDeliveryTime || parsed.requestedDeliveryTime),
+        expectedDeliveryTime: deliverySchedule.expectedDeliveryTime,
         pickupLatitude: pickFirstNumber(parsed.pickupLatitude, normalizedPickup.lat),
         pickupLongitude: pickFirstNumber(parsed.pickupLongitude, normalizedPickup.lng),
         deliveryLatitude: pickFirstNumber(parsed.deliveryLatitude, normalizedDelivery.lat),

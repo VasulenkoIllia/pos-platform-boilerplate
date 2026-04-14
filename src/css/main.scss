@@ -374,46 +374,84 @@ html, html body {
     .shipday-confirm {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 12px;
+        width: min(100%, 360px);
+        margin: 0 auto;
     }
 
     .shipday-confirm__header {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
 
         h2 {
             margin: 0;
-            font-size: 24px;
-            line-height: 1.2;
+            font-size: 18px;
+            line-height: 1.25;
         }
 
         p {
             margin: 0;
             color: #5c6978;
+            font-size: 13px;
+            line-height: 1.4;
         }
     }
 
-    .shipday-confirm__address {
-        padding: 14px 16px;
+    .shipday-confirm__card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
         border: 1px solid rgba(36, 80, 122, 0.14);
         border-radius: 14px;
         background: #f7fafc;
+    }
+
+    .shipday-confirm__label {
+        color: #5c6978;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .shipday-confirm__address {
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #fff;
+        border: 1px solid rgba(36, 80, 122, 0.1);
         color: #22313f;
-        font-size: 15px;
-        line-height: 1.5;
+        font-size: 14px;
+        line-height: 1.4;
         font-weight: 600;
     }
 
     .shipday-confirm__meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         color: #5c6978;
-        font-size: 14px;
+        font-size: 13px;
+
+        strong {
+            color: #22313f;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: right;
+        }
     }
 
     .shipday-confirm__actions {
         display: flex;
         gap: 12px;
-        flex-wrap: wrap;
+        width: 100%;
+
+        .btn {
+            flex: 1 1 0;
+            min-width: 0;
+        }
     }
 
     .mock-runtime-picker .btn {
@@ -446,6 +484,27 @@ html, html body {
         .shipday-confirm__actions {
             flex-direction: column;
             align-items: flex-start;
+        }
+
+        .shipday-confirm {
+            width: 100%;
+        }
+
+        .shipday-confirm__actions {
+            width: 100%;
+
+            .btn {
+                width: 100%;
+            }
+        }
+
+        .shipday-confirm__meta {
+            flex-direction: column;
+            align-items: flex-start;
+
+            strong {
+                text-align: left;
+            }
         }
 
         .poster-base-app__grid {

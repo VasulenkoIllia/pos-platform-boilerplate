@@ -1524,23 +1524,27 @@ class PosterBaseApp extends React.Component {
         return (
             <section className="shipday-confirm">
                 <div className="shipday-confirm__header">
-                    <h2>Підтвердження відправки</h2>
-                    <p>Ви точно хочете відправити замовлення за адресою?</p>
+                    <h2>Відправити в Shipday?</h2>
+                    <p>Підтвердь адресу доставки перед відправкою.</p>
                 </div>
 
-                <div className="shipday-confirm__address">
-                    {shipdayDraft.deliveryAddress || 'Адреса доставки не заповнена'}
-                </div>
-
-                {shipdayDraft.expectedDeliveryDate && shipdayDraft.expectedDeliveryTime && (
-                    <div className="shipday-confirm__meta">
-                        Час доставки з Poster:
-                        {' '}
-                        {shipdayDraft.expectedDeliveryDate}
-                        {' '}
-                        {shipdayDraft.expectedDeliveryTime}
+                <div className="shipday-confirm__card">
+                    <div className="shipday-confirm__label">Адреса доставки</div>
+                    <div className="shipday-confirm__address">
+                        {shipdayDraft.deliveryAddress || 'Адреса доставки не заповнена'}
                     </div>
-                )}
+
+                    {shipdayDraft.expectedDeliveryDate && shipdayDraft.expectedDeliveryTime && (
+                        <div className="shipday-confirm__meta">
+                            <span>Час доставки</span>
+                            <strong>
+                                {shipdayDraft.expectedDeliveryDate}
+                                {' '}
+                                {shipdayDraft.expectedDeliveryTime}
+                            </strong>
+                        </div>
+                    )}
+                </div>
 
                 <div className="shipday-confirm__actions">
                     <button
