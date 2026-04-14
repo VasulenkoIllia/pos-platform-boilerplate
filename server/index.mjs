@@ -526,6 +526,78 @@ const extractRequestOrderLookupHints = (request) => {
     };
 };
 
+const getRequestShipdayPayload = (request) => {
+    if (!request.body || typeof request.body !== 'object') {
+        return {};
+    }
+
+    return request.body.payload && typeof request.body.payload === 'object'
+        ? request.body.payload
+        : {};
+};
+
+const hasPayloadDeliverySchedule = (payload) => {
+    if (!payload || typeof payload !== 'object') {
+        return false;
+    }
+
+    const requestedDeliveryTime = normalizeText(
+        payload.requestedDeliveryTime
+        || payload.requested_delivery_time,
+    );
+    const expectedDeliveryDate = normalizeText(
+        payload.expectedDeliveryDate
+        || payload.expected_delivery_date,
+    );
+    const expectedDeliveryTime = normalizeText(
+        payload.expectedDeliveryTime
+        || payload.expected_delivery_time,
+    );
+
+    return Boolean(requestedDeliveryTime || (expectedDeliveryDate && expectedDeliveryTime));
+};
+
+const buildShipdayInputWithPosterFallbacks = ({
+    request,
+    posterTransaction,
+}) => {
+    if (!request.body || typeof request.body !== 'object') {
+        return request.body;
+    }
+
+    const rawPayload = getRequestShipdayPayload(request);
+
+    if (hasPayloadDeliverySchedule(rawPayload)) {
+        return request.body;
+    }
+
+    const fallbackDeliveryTime = normalizeText(
+        posterTransaction
+        && (
+            posterTransaction.deliveryTime
+            || (posterTransaction.raw
+                && posterTransaction.raw.delivery
+                && (
+                    posterTransaction.raw.delivery.delivery_time
+                    || posterTransaction.raw.delivery.deliveryTime
+                    || posterTransaction.raw.delivery.time
+                ))
+        ),
+    );
+
+    if (!fallbackDeliveryTime) {
+        return request.body;
+    }
+
+    return {
+        ...request.body,
+        payload: {
+            ...rawPayload,
+            requestedDeliveryTime: fallbackDeliveryTime,
+        },
+    };
+};
+
 const getPosterOrderCandidateScore = ({
     hints,
     transaction,
@@ -1477,11 +1549,13 @@ export const createApp = () => {
                 ? request.body.poster
                 : {};
             const requestOrderHints = extractRequestOrderLookupHints(request);
+            const requestShipdayPayload = getRequestShipdayPayload(request);
             const requiresPosterTransactionLookup = !normalizeText(
                 rawPosterContext.spotId
                 || rawPosterContext.spot_id,
             );
-            const posterTransaction = requiresPosterTransactionLookup
+            const requiresPosterTransactionScheduleFallback = !hasPayloadDeliverySchedule(requestShipdayPayload);
+            const posterTransaction = (requiresPosterTransactionLookup || requiresPosterTransactionScheduleFallback)
                 ? await resolvePosterTransactionForAccount({
                     request,
                     account,
@@ -1514,6 +1588,10 @@ export const createApp = () => {
                     || '',
                 ),
             };
+            const shipdayInput = buildShipdayInputWithPosterFallbacks({
+                request,
+                posterTransaction,
+            });
             const resolvedShipdayConfig = resolveShipdayAccountConfig({
                 accountSettings,
                 globalShipdayConfig: config.shipday,
@@ -1544,7 +1622,7 @@ export const createApp = () => {
             }
 
             const payload = normalizeShipdayOrderPayload({
-                input: request.body,
+                input: shipdayInput,
                 defaultPickup: resolvedShipdayConfig.pickup,
             });
             const buildResponsePayload = (shipdayResponse, {
@@ -1575,6 +1653,7 @@ export const createApp = () => {
                         orderNumber: posterContext.orderNumber || null,
                         spotId: posterContext.spotId || null,
                         spotName: posterContext.spotName || null,
+                        deliveryTime: (posterTransaction && posterTransaction.deliveryTime) || null,
                         transactionLookupCandidates: requestOrderHints.transactionLookupCandidates,
                         transactionLookupUsed: Boolean(posterTransaction),
                     },

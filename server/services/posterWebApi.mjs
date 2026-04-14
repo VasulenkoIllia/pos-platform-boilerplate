@@ -139,6 +139,16 @@ const normalizePosterTransaction = (transaction) => {
             transaction.delivery && transaction.delivery.address1,
             transaction.delivery && transaction.delivery.address2,
         ].filter(Boolean).join(', ').trim(),
+        deliveryTime: String(
+            (transaction.delivery && (
+                transaction.delivery.delivery_time
+                || transaction.delivery.deliveryTime
+                || transaction.delivery.time
+            ))
+            || transaction.delivery_time
+            || transaction.deliveryTime
+            || '',
+        ).trim(),
         sum: String(transaction.sum || '').trim(),
         raw: transaction,
     };
@@ -273,6 +283,7 @@ export const getPosterTransaction = async ({
             url.searchParams.set(tokenParamKey, normalizedToken);
             url.searchParams.set('transaction_id', normalizedTransactionId);
             url.searchParams.set('include_delivery', 'true');
+            url.searchParams.set('timezone', 'client');
 
             try {
                 const response = await withTimeout(signal => fetch(url.toString(), {

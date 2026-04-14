@@ -611,6 +611,8 @@ const findPosterDeliveryDateTime = (order) => {
 
     const candidates = [
         order.delivery && order.delivery.time,
+        order.delivery && order.delivery.delivery_time,
+        order.delivery && order.delivery.deliveryTime,
         order.deliveryTime,
         order.delivery_time,
         order.requestedDeliveryTime,
