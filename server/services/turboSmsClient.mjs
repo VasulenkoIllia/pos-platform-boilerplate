@@ -16,8 +16,7 @@ export async function sendSms({ token, sender, phone, text, sequenceId, mockMode
 
     const payload = {
         recipients: [normalizedPhone],
-        sender,
-        text,
+        sms: { sender, text },
     };
 
     if (sequenceId) {
