@@ -2102,6 +2102,7 @@ export const createApp = () => {
 
         console.log(`[webhook/shipday] Подія ${event} для замовлення ${orderNumber} (account: ${account}).`);
         console.log('[webhook/shipday] order payload:', JSON.stringify(body.order || {}));
+        console.log('[webhook/shipday] delivery_details:', JSON.stringify(body.delivery_details || {}));
 
         // Відповідаємо Shipday одразу — щоб він не вважав запит невдалим і не ретраїв
         response.status(200).json({
@@ -2113,12 +2114,12 @@ export const createApp = () => {
         });
 
         if (event === 'ORDER_ACCEPTED' || event === 'ORDER_ACCEPTED_AND_STARTED') {
-            const order = body.order || {};
-            const customerPhone = (order.customer && order.customer.phone)
-                || order.customerPhoneNumber
-                || order.customerPhone
-                || order.phoneNumber;
-            const trackingLink = order.trackingLink || order.tracking_link;
+            const deliveryDetails = body.delivery_details || {};
+            const customerPhone = deliveryDetails.phone;
+            const trackingLink = (body.order && body.order.trackingLink)
+                || (body.order && body.order.tracking_link)
+                || deliveryDetails.trackingLink
+                || deliveryDetails.tracking_link;
 
             if (!customerPhone) {
                 console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутній телефон замовника — SMS не відправлено.');
