@@ -2141,10 +2141,11 @@ export const createApp = () => {
                                 orderNumber: shipdayOrderNumber,
                             });
 
-                            console.log(`[webhook/shipday] GET order ${shipdayOrderNumber}: ok=${orderResponse.ok} status=${orderResponse.status} body=${JSON.stringify(orderResponse.body)}`);
-
                             if (orderResponse.ok && orderResponse.body) {
-                                trackingLink = orderResponse.body.trackingLink || null;
+                                const orderData = Array.isArray(orderResponse.body)
+                                    ? orderResponse.body[0]
+                                    : orderResponse.body;
+                                trackingLink = (orderData && orderData.trackingLink) || null;
                             }
                         } catch (err) {
                             console.error('[webhook/shipday] Помилка отримання trackingLink з Shipday API:', err.message);
