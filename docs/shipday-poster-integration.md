@@ -533,6 +533,7 @@ Webhook приймає всі події Shipday. Поточний статус 
 | `ORDER_INSERTED` | отримується, логується |
 | `ORDER_ASSIGNED` | отримується, логується |
 | `ORDER_ACCEPTED` / `ORDER_ACCEPTED_AND_STARTED` | **відправляє SMS замовнику через TurboSMS** |
+| `ORDER_PIKEDUP` | отримується, логується |
 | `ORDER_ONTHEWAY` | отримується, логується |
 | `ORDER_COMPLETED` | отримується, логується |
 | решта | отримуються, логуються |
@@ -547,20 +548,21 @@ Webhook приймає всі події Shipday. Поточний статус 
 Де піца? А тут: https://track.shipday.com/...
 ```
 
-Посилання береться з поля `order.trackingLink` у Shipday webhook payload.
+Посилання береться через окремий запит `GET /orders/:orderNumber` до Shipday API після отримання webhook — поле `trackingLink` у самому webhook payload відсутнє.
 
 ### Захист від дублікатів
 
-Кожен запит до TurboSMS містить `sequence_id` у форматі `accepted-<orderNumber>`.
-TurboSMS блокує повторну відправку з тим самим `sequence_id` протягом 30 днів — якщо Shipday заретраїть webhook, SMS замовнику прийде лише один раз.
+Кожен запит до TurboSMS містить `sequence_id` у форматі `sms-accepted-<orderNumber>`.
+TurboSMS блокує повторну відправку з тим самим `sequence_id` протягом 30 днів — якщо Shipday заретраїть webhook, SMS замовнику прийде лише один раз (відповідь `507` від TurboSMS вважається успіхом і не перериває flow).
 
 ### Flow
 
-1. Shipday надсилає `ORDER_ACCEPTED` на `POST /webhooks/shipday`
+1. Shipday надсилає `ORDER_ACCEPTED_AND_STARTED` на `POST /webhooks/shipday`
 2. Backend верифікує токен, знаходить `account` по `order_log`
 3. Одразу відповідає Shipday `HTTP 200` (щоб Shipday не ретраїв)
-4. Асинхронно викликає TurboSMS API з телефоном і посиланням на трекер
-5. Якщо телефон або посилання відсутні — SMS не надсилається, у логах попередження
+4. Асинхронно робить `GET /orders/:orderNumber` до Shipday API, щоб отримати `trackingLink`
+5. Викликає TurboSMS API з телефоном замовника і tracking-посиланням
+6. Якщо телефон або `trackingLink` відсутні — SMS не надсилається, у логах попередження
 
 ### Що потрібно налаштувати
 
@@ -585,17 +587,17 @@ TurboSMS блокує повторну відправку з тим самим `
 curl -X POST http://localhost:8787/webhooks/shipday \
   -H "Content-Type: application/json" \
   -d '{
-    "event": "ORDER_ACCEPTED",
-    "order": {
-      "orderNumber": "TEST-001",
-      "orderId": "99999",
-      "trackingLink": "https://track.shipday.com/test-link",
-      "customer": { "phone": "+380503288668" }
-    }
+    "event": "ORDER_ACCEPTED_AND_STARTED",
+    "order": { "order_number": "TEST-001", "orderId": "99999" },
+    "delivery_details": { "phone": "+380XXXXXXXXX" }
   }'
 ```
 
-Перед тестом потрібно, щоб у таблиці `order_log` існував запис з `order_number = 'TEST-001'` або `shipday_order_id = '99999'` — інакше webhook ігнорується на етапі пошуку `account`.
+Умови для успішного проходження тесту:
+- У таблиці `order_log` має бути запис з `shipday_order_id = '99999'` або `order_number = 'TEST-001'` — інакше webhook ігнорується на етапі пошуку `account`.
+- Замовлення `TEST-001` має існувати в Shipday — backend робить `GET /orders/TEST-001` щоб отримати `trackingLink`.
+
+У логах сервера буде видно або `[turbosms] MOCK SMS →` (якщо `TURBOSMS_MOCK_MODE=true`), або `[turbosms] SMS відправлено →` (якщо `false`).
 
 **Реальний SMS:** встановити `TURBOSMS_MOCK_MODE=false`, перезапустити сервер і надіслати той самий curl.
 
