@@ -2101,8 +2101,6 @@ export const createApp = () => {
         }
 
         console.log(`[webhook/shipday] Подія ${event} для замовлення ${orderNumber} (account: ${account}).`);
-        console.log('[webhook/shipday] order payload:', JSON.stringify(body.order || {}));
-        console.log('[webhook/shipday] delivery_details:', JSON.stringify(body.delivery_details || {}));
 
         // Відповідаємо Shipday одразу — щоб він не вважав запит невдалим і не ретраїв
         response.status(200).json({
@@ -2116,28 +2114,57 @@ export const createApp = () => {
         if (event === 'ORDER_ACCEPTED' || event === 'ORDER_ACCEPTED_AND_STARTED') {
             const deliveryDetails = body.delivery_details || {};
             const customerPhone = deliveryDetails.phone;
-            const trackingLink = (body.order && body.order.trackingLink)
-                || (body.order && body.order.tracking_link)
-                || deliveryDetails.trackingLink
-                || deliveryDetails.tracking_link;
+            const shipdayOrderNumber = body.order && body.order.order_number;
 
             if (!customerPhone) {
                 console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутній телефон замовника — SMS не відправлено.');
-            } else if (!trackingLink) {
-                console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутнє посилання на трекер — SMS не відправлено.');
             } else if (!config.turboSms.token) {
                 console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): TURBOSMS_TOKEN не налаштовано — SMS не відправлено.');
             } else {
-                const text = `Де піца? А тут: ${trackingLink}`;
+                (async () => {
+                    let trackingLink = null;
 
-                sendSms({
-                    token: config.turboSms.token,
-                    sender: config.turboSms.sender,
-                    phone: customerPhone,
-                    text,
-                    sequenceId: orderNumber ? `accepted-${orderNumber}` : undefined,
-                    mockMode: config.turboSms.mockMode,
-                }).catch(err => console.error('[webhook/shipday] Помилка відправки SMS:', err.message));
+                    if (shipdayOrderNumber) {
+                        try {
+                            const accountSettings = await accountSettingsStore.findByAccount(account);
+                            const resolvedShipdayConfig = resolveShipdayAccountConfig({
+                                accountSettings,
+                                globalShipdayConfig: config.shipday,
+                                posterContext: {},
+                            });
+
+                            const orderResponse = await getShipdayOrder({
+                                apiBaseUrl: config.shipday.apiBaseUrl,
+                                apiKey: resolvedShipdayConfig.apiKey,
+                                authMode: resolvedShipdayConfig.authMode,
+                                timeoutMs: config.shipday.timeoutMs,
+                                orderNumber: shipdayOrderNumber,
+                            });
+
+                            if (orderResponse.ok && orderResponse.body) {
+                                trackingLink = orderResponse.body.trackingLink || null;
+                            }
+                        } catch (err) {
+                            console.error('[webhook/shipday] Помилка отримання trackingLink з Shipday API:', err.message);
+                        }
+                    }
+
+                    if (!trackingLink) {
+                        console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): trackingLink не знайдено — SMS не відправлено.');
+                        return;
+                    }
+
+                    const text = `Де піца? А тут: ${trackingLink}`;
+
+                    await sendSms({
+                        token: config.turboSms.token,
+                        sender: config.turboSms.sender,
+                        phone: customerPhone,
+                        text,
+                        sequenceId: shipdayOrderNumber ? `accepted-${shipdayOrderNumber}` : undefined,
+                        mockMode: config.turboSms.mockMode,
+                    });
+                })().catch(err => console.error('[webhook/shipday] Помилка обробки ORDER_ACCEPTED:', err.message));
             }
         }
     });
