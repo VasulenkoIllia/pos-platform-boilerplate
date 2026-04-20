@@ -2112,8 +2112,12 @@ export const createApp = () => {
         });
 
         if (event === 'ORDER_ACCEPTED' || event === 'ORDER_ACCEPTED_AND_STARTED') {
-            const customerPhone = body.order && body.order.customer && body.order.customer.phone;
-            const trackingLink = body.order && body.order.trackingLink;
+            const order = body.order || {};
+            const customerPhone = (order.customer && order.customer.phone)
+                || order.customerPhoneNumber
+                || order.customerPhone
+                || order.phoneNumber;
+            const trackingLink = order.trackingLink || order.tracking_link;
 
             if (!customerPhone) {
                 console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутній телефон замовника — SMS не відправлено.');
