@@ -24,6 +24,8 @@ export async function sendSms({ token, sender, phone, text, sequenceId, mockMode
         payload.sequence_id = sequenceId;
     }
 
+    console.log('[turbosms] payload:', JSON.stringify(payload));
+
     let response;
     let responseBody;
 
