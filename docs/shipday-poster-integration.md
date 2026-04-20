@@ -18,6 +18,7 @@
 - логування замовлень у `order_log` (`shipdayOrderId` / `orderNumber` → account).
 - dedupe-захист live-відправки по `account + orderNumber`, щоб не створювати дублікати в Shipday.
 - Shipday webhook endpoint з верифікацією token.
+- SMS-нотифікація замовнику через TurboSMS при події `ORDER_ACCEPTED`.
 - browser-session ізоляція settings page: користувач бачить тільки ті Poster акаунти, які сам підключив у поточному браузері через OAuth.
 - CSRF-захист Poster OAuth через `state`.
 
@@ -412,7 +413,7 @@ Shipday API key зберігається зашифрованим.
 Таблиця `order_log` використовується для:
 
 - визначення `account` у Shipday webhook спочатку по `shipdayOrderId`, а потім обережним fallback по `orderNumber`
-- майбутньої відправки TurboSMS
+- відправки TurboSMS при `ORDER_ACCEPTED`
 - аудиту замовлень по акаунту
 
 У file-based (local dev) режимі `order_log` зберігається in-memory.
@@ -431,6 +432,9 @@ Shipday API key зберігається зашифрованим.
 Опціонально:
 
 - `SHIPDAY_WEBHOOK_TOKEN` — токен для верифікації вхідних Shipday webhook-ів (налаштовується в Shipday Dashboard → Integrations → Webhook)
+- `TURBOSMS_TOKEN` — Bearer-токен TurboSMS для SMS-нотифікацій
+- `TURBOSMS_SENDER` — ім'я відправника SMS (затверджене в кабінеті TurboSMS)
+- `TURBOSMS_MOCK_MODE` — `true` під час тестування, `false` у продакшні
 
 Якщо `SETTINGS_ENCRYPTION_SECRET` не встановлено, backend виведе попередження в логи і використає менш безпечний fallback. Не допускай цього в production.
 
@@ -528,9 +532,72 @@ Webhook приймає всі події Shipday. Поточний статус 
 |---|---|
 | `ORDER_INSERTED` | отримується, логується |
 | `ORDER_ASSIGNED` | отримується, логується |
-| `ORDER_ONTHEWAY` | отримується, логується — TurboSMS буде тут |
+| `ORDER_ACCEPTED` | **відправляє SMS замовнику через TurboSMS** |
+| `ORDER_ONTHEWAY` | отримується, логується |
 | `ORDER_COMPLETED` | отримується, логується |
 | решта | отримуються, логуються |
+
+## TurboSMS
+
+При отриманні події `ORDER_ACCEPTED` від Shipday backend автоматично відправляє SMS замовнику з посиланням на трекер.
+
+### Текст SMS
+
+```
+Де піца? А тут: https://track.shipday.com/...
+```
+
+Посилання береться з поля `order.trackingLink` у Shipday webhook payload.
+
+### Захист від дублікатів
+
+Кожен запит до TurboSMS містить `sequence_id` у форматі `accepted-<orderNumber>`.
+TurboSMS блокує повторну відправку з тим самим `sequence_id` протягом 30 днів — якщо Shipday заретраїть webhook, SMS замовнику прийде лише один раз.
+
+### Flow
+
+1. Shipday надсилає `ORDER_ACCEPTED` на `POST /webhooks/shipday`
+2. Backend верифікує токен, знаходить `account` по `order_log`
+3. Одразу відповідає Shipday `HTTP 200` (щоб Shipday не ретраїв)
+4. Асинхронно викликає TurboSMS API з телефоном і посиланням на трекер
+5. Якщо телефон або посилання відсутні — SMS не надсилається, у логах попередження
+
+### Що потрібно налаштувати
+
+В Render Environment Variables:
+
+| Змінна | Значення |
+|---|---|
+| `TURBOSMS_TOKEN` | Bearer-токен з кабінету turbosms.ua → API |
+| `TURBOSMS_SENDER` | Ім'я відправника (затверджене в TurboSMS, до 11 символів) |
+| `TURBOSMS_MOCK_MODE` | `true` — логувати замість відправки (для тестування), `false` — прод |
+
+### Де перевірити що SMS відправлено
+
+- Логи сервера: `[turbosms] SMS відправлено → 380XXXXXXXXX`
+- Кабінет TurboSMS → **Відправлені SMS** — повна історія з номером, текстом і статусом доставки
+
+### Тестування
+
+**Mock-тест (без реального SMS):**
+
+```bash
+curl -X POST http://localhost:8787/webhooks/shipday \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event": "ORDER_ACCEPTED",
+    "order": {
+      "orderNumber": "TEST-001",
+      "orderId": "99999",
+      "trackingLink": "https://track.shipday.com/test-link",
+      "customer": { "phone": "+380503288668" }
+    }
+  }'
+```
+
+Перед тестом потрібно, щоб у таблиці `order_log` існував запис з `order_number = 'TEST-001'` або `shipday_order_id = '99999'` — інакше webhook ігнорується на етапі пошуку `account`.
+
+**Реальний SMS:** встановити `TURBOSMS_MOCK_MODE=false`, перезапустити сервер і надіслати той самий curl.
 
 ## Діагностика
 
@@ -624,6 +691,7 @@ Backend:
 
 - [index.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/index.mjs)
 - [shipdayClient.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/services/shipdayClient.mjs)
+- [turboSmsClient.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/services/turboSmsClient.mjs)
 - [accountSettings.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/services/accountSettings.mjs)
 - [posterAuth.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/services/posterAuth.mjs)
 - [posterWebApi.mjs](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/server/services/posterWebApi.mjs)

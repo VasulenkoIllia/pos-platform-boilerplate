@@ -26,6 +26,12 @@ services:
         sync: false
       - key: SHIPDAY_MOCK_MODE
         value: "true"
+      - key: TURBOSMS_TOKEN
+        sync: false
+      - key: TURBOSMS_SENDER
+        sync: false
+      - key: TURBOSMS_MOCK_MODE
+        value: "true"
       - key: POSTER_ACCOUNT_SETTINGS_FILE
         value: .data/poster-account-settings.json
       - key: SHIPDAY_PICKUP_NAME

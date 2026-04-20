@@ -104,6 +104,11 @@ const config = {
             return 'poster-shipday-bridge-dev-secret';
         })(),
     },
+    turboSms: {
+        token: String(process.env.TURBOSMS_TOKEN || '').trim(),
+        sender: String(process.env.TURBOSMS_SENDER || '').trim(),
+        mockMode: String(process.env.TURBOSMS_MOCK_MODE || '').trim() === 'true',
+    },
     shipday: {
         apiBaseUrl: normalizeBaseUrl(process.env.SHIPDAY_API_BASE_URL || 'https://api.shipday.com'),
         apiKey: String(process.env.SHIPDAY_API_KEY || '').trim(),
