@@ -2141,7 +2141,7 @@ export const createApp = () => {
                                 orderNumber: shipdayOrderNumber,
                             });
 
-                            console.log(`[webhook/shipday] GET order ${shipdayOrderNumber}: ok=${orderResponse.ok} status=${orderResponse.status} trackingLink=${orderResponse.body && orderResponse.body.trackingLink}`);
+                            console.log(`[webhook/shipday] GET order ${shipdayOrderNumber}: ok=${orderResponse.ok} status=${orderResponse.status} body=${JSON.stringify(orderResponse.body)}`);
 
                             if (orderResponse.ok && orderResponse.body) {
                                 trackingLink = orderResponse.body.trackingLink || null;
