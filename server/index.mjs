@@ -2164,7 +2164,6 @@ export const createApp = () => {
                         sender: config.turboSms.sender,
                         phone: customerPhone,
                         text,
-                        sequenceId: shipdayOrderNumber ? `accepted-${shipdayOrderNumber}` : undefined,
                         mockMode: config.turboSms.mockMode,
                     });
                 })().catch(err => console.error('[webhook/shipday] Помилка обробки ORDER_ACCEPTED:', err.message));
