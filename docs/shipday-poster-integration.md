@@ -532,7 +532,7 @@ Webhook приймає всі події Shipday. Поточний статус 
 |---|---|
 | `ORDER_INSERTED` | отримується, логується |
 | `ORDER_ASSIGNED` | отримується, логується |
-| `ORDER_ACCEPTED` | **відправляє SMS замовнику через TurboSMS** |
+| `ORDER_ACCEPTED` / `ORDER_ACCEPTED_AND_STARTED` | **відправляє SMS замовнику через TurboSMS** |
 | `ORDER_ONTHEWAY` | отримується, логується |
 | `ORDER_COMPLETED` | отримується, логується |
 | решта | отримуються, логуються |

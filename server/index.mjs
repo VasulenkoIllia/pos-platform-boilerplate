@@ -2111,16 +2111,16 @@ export const createApp = () => {
             message: 'Webhook отримано.',
         });
 
-        if (event === 'ORDER_ACCEPTED') {
+        if (event === 'ORDER_ACCEPTED' || event === 'ORDER_ACCEPTED_AND_STARTED') {
             const customerPhone = body.order && body.order.customer && body.order.customer.phone;
             const trackingLink = body.order && body.order.trackingLink;
 
             if (!customerPhone) {
-                console.warn('[webhook/shipday] ORDER_ACCEPTED: відсутній телефон замовника — SMS не відправлено.');
+                console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутній телефон замовника — SMS не відправлено.');
             } else if (!trackingLink) {
-                console.warn('[webhook/shipday] ORDER_ACCEPTED: відсутнє посилання на трекер — SMS не відправлено.');
+                console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): відсутнє посилання на трекер — SMS не відправлено.');
             } else if (!config.turboSms.token) {
-                console.warn('[webhook/shipday] ORDER_ACCEPTED: TURBOSMS_TOKEN не налаштовано — SMS не відправлено.');
+                console.warn('[webhook/shipday] ORDER_ACCEPTED(_AND_STARTED): TURBOSMS_TOKEN не налаштовано — SMS не відправлено.');
             } else {
                 const text = `Де піца? А тут: ${trackingLink}`;
 
