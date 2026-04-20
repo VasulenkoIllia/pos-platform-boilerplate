@@ -2126,7 +2126,7 @@ export const createApp = () => {
 
                     if (shipdayOrderNumber) {
                         try {
-                            const accountSettings = await accountSettingsStore.findByAccount(account);
+                            const accountSettings = await accountSettingsStore.get(account);
                             const resolvedShipdayConfig = resolveShipdayAccountConfig({
                                 accountSettings,
                                 globalShipdayConfig: config.shipday,
