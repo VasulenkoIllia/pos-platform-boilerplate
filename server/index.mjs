@@ -2101,6 +2101,7 @@ export const createApp = () => {
         }
 
         console.log(`[webhook/shipday] Подія ${event} для замовлення ${orderNumber} (account: ${account}).`);
+        console.log('[webhook/shipday] order payload:', JSON.stringify(body.order || {}));
 
         // Відповідаємо Shipday одразу — щоб він не вважав запит невдалим і не ретраїв
         response.status(200).json({
