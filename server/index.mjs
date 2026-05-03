@@ -301,9 +301,10 @@ const readAccountSession = (request) => {
     }
 };
 
-const buildOauthState = () => ({
+const buildOauthState = ({ account } = {}) => ({
     nonce: crypto.randomBytes(24).toString('base64url'),
     issuedAt: new Date().toISOString(),
+    account: normalizeAccount(account) || '',
 });
 
 const readOauthState = (request) => {
@@ -1289,7 +1290,7 @@ export const createApp = () => {
         }
 
         const account = normalizeAccount(request.query.account);
-        const oauthState = buildOauthState();
+        const oauthState = buildOauthState({ account });
 
         setSignedCookie({
             response,
@@ -1337,14 +1338,41 @@ export const createApp = () => {
             return;
         }
 
-        if (!state || !oauthState || oauthState.nonce !== state) {
+        // Poster OAuth не повертає state у callback навіть якщо ми його надсилаємо —
+        // тому валідуємо OAuth-сесію через підписаний cookie з account, а state у URL
+        // приймаємо як bonus-перевірку коли він є.
+        if (!oauthState) {
             response.status(400).type('html').send(renderPosterErrorPage({
                 appName: config.appName,
                 heading: 'Не вдалося підтвердити Poster OAuth сесію',
-                message: 'OAuth callback прийшов з невалідним або простроченим state.',
+                message: 'OAuth callback прийшов без активної сесії підключення в цьому браузері.',
                 errors: [
                     'Повтори підключення ще раз через кнопку «Під’єднати».',
                     'Цей захист потрібен, щоб не приймати сторонні або застарілі callback-запити.',
+                ],
+            }));
+            return;
+        }
+
+        if (oauthState.account && oauthState.account !== account) {
+            response.status(400).type('html').send(renderPosterErrorPage({
+                appName: config.appName,
+                heading: 'Account у callback не збігається з тим, що ініціював OAuth',
+                message: `Очікували account="${oauthState.account}", отримали "${account}".`,
+                errors: [
+                    'Повтори підключення ще раз через кнопку «Під’єднати» для потрібної точки.',
+                ],
+            }));
+            return;
+        }
+
+        if (state && oauthState.nonce !== state) {
+            response.status(400).type('html').send(renderPosterErrorPage({
+                appName: config.appName,
+                heading: 'Не вдалося підтвердити Poster OAuth сесію',
+                message: 'OAuth state у callback не збігається з cookie.',
+                errors: [
+                    'Повтори підключення ще раз через кнопку «Під’єднати».',
                 ],
             }));
             return;
