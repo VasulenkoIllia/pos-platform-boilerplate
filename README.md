@@ -9,15 +9,18 @@
 - відправка delivery orders у Shipday
 - dedupe і `order_log`
 - Postgres storage
+- Docker deployment з Traefik (self-hosted, у production)
 
 ## Де читати документацію
 
 - Архітектура і бізнес-flow:
-  [docs/shipday-poster-integration.md](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/docs/shipday-poster-integration.md)
+  [docs/shipday-poster-integration.md](docs/shipday-poster-integration.md)
 - Локальний POS/base flow:
-  [docs/poster-pos-base.md](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/docs/poster-pos-base.md)
-- Render backend setup:
-  [docs/render-backend.md](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/docs/render-backend.md)
+  [docs/poster-pos-base.md](docs/poster-pos-base.md)
+- **Production deployment (Docker + Traefik + Cloudflare):**
+  [docs/self-hosted-deployment.md](docs/self-hosted-deployment.md)
+- Render backend (deprecated, для історичної довідки):
+  [docs/render-backend.md](docs/render-backend.md)
 
 ## Локальний запуск
 
@@ -36,10 +39,13 @@ npm run dev:backend
 
 ## Важливо про деплой
 
-- `git push` або Render deploy оновлюють тільки backend
-- після змін у POS frontend треба окремо перелити `bundle.js` у Poster:
+Backend деплоїться через Docker Compose на власний сервер за Traefik — див.
+[docs/self-hosted-deployment.md](docs/self-hosted-deployment.md).
+
+Після змін у POS frontend треба окремо перелити `bundle.js` у Poster:
 
 ```bash
+export POSTER_BACKEND_BASE_URL=https://mamamia.workflo.space
 npm run deploy
 ```
 

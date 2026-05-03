@@ -20,7 +20,7 @@
 - Shipday webhook endpoint з верифікацією token.
 - SMS-нотифікація замовнику через TurboSMS при події `ORDER_ACCEPTED`.
 - browser-session ізоляція settings page: користувач бачить тільки ті Poster акаунти, які сам підключив у поточному браузері через OAuth.
-- CSRF-захист Poster OAuth через `state`.
+- CSRF-захист Poster OAuth через підписаний HttpOnly cookie з прив'язкою до `account` (Poster не повертає `state` у callback, тому валідація йде через cookie-only — див. [self-hosted-deployment.md](self-hosted-deployment.md#poster-oauth-flow)).
 
 ## Архітектура
 

@@ -1,7 +1,11 @@
-# Render backend для Poster + Shipday
+# Render backend для Poster + Shipday (DEPRECATED)
+
+> ⚠️ **Цей setup більше не використовується.** Production переїхав на self-hosted Docker за Traefik.
+> Актуальна інструкція: [self-hosted-deployment.md](self-hosted-deployment.md).
+> Документ збережено для історичної довідки і на випадок rollback.
 
 Цей документ описує тільки setup/deploy частину. Повна архітектура і бізнес-flow зібрані в
-[shipday-poster-integration.md](/Users/monstermac/WebstormProjects/pos-platform-boilerplate/docs/shipday-poster-integration.md).
+[shipday-poster-integration.md](shipday-poster-integration.md).
 
 ## Що деплоїться на Render
 

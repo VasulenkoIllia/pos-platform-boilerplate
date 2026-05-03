@@ -167,6 +167,43 @@ Backend multi-tenant — кожна точка налаштовується ок
 4. Save
 5. Тестове замовлення в касі → перевірити що пішло в Shipday + SMS прийшла
 
+### Якщо OAuth не стартує автоматично
+
+Якщо в Poster admin клік "Підключити" приводить тебе одразу на `/poster/auth/callback`
+з помилкою OAuth — відкрий вручну у новому вікні браузера:
+
+```
+https://mamamia.workflo.space/poster/connect?account=<account>
+```
+
+Натисни "Продовжити підключення" — це ініціює OAuth з cookie-сесією і приведе на settings page
+після успіху. Цей шлях треба використовувати для кожної точки на старті (поки в БД немає installation).
+
+## Poster OAuth flow
+
+Backend multi-step:
+
+1. `GET /poster/connect?account=<acc>` — рендерить сторінку з кнопкою "Продовжити"
+2. `GET /poster/oauth/start?account=<acc>` — встановлює HttpOnly+Signed cookie
+   `poster_shipday_oauth_state` (містить nonce та account, TTL 10 хв) і робить redirect на
+   `https://<acc>.joinposter.com/api/auth?...&state=<nonce>`
+3. Користувач логиниться у Poster і клікає "Дозволити"
+4. Poster робить redirect на `https://mamamia.workflo.space/poster/auth/callback?code=X&account=Y`
+   ⚠️ Poster **НЕ повертає** `state` параметр у callback (це особливість їхньої OAuth імплементації)
+5. Backend перевіряє:
+   - cookie існує і не expired (TTL 10 хв)
+   - `account` у callback збігається з `account` у cookie payload
+   - якщо state у URL раптом є — додатково звіряє з cookie nonce
+6. Backend exchange `code` → `access_token` через Poster Web API
+7. Token зберігається в `poster_installations` → redirect на settings page
+
+### Чому не URL-state
+
+Poster OAuth не передає `state` у callback навіть коли надсилається в authorization request.
+Тому CSRF-захист працює через cookie-only валідацію: підписаний HttpOnly cookie прив'язує
+весь OAuth flow до конкретної браузерної сесії, а звірка `account` запобігає підстановці
+чужого callback. Це не слабше за state-параметр для нашого сценарію.
+
 ## Корисні команди
 
 ```bash
