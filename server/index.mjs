@@ -1262,9 +1262,14 @@ export const createApp = () => {
             return;
         }
 
+        const connectAccount = normalizeAccount(request.query.account);
+        const oauthStartUrl = connectAccount
+            ? `${config.urls.oauthStart}?account=${encodeURIComponent(connectAccount)}`
+            : config.urls.oauthStart;
+
         response.type('html').send(renderConnectPage({
             appName: config.appName,
-            oauthStartUrl: config.urls.oauthStart,
+            oauthStartUrl,
             oauthCallbackUrl: config.urls.oauthCallback,
             shipdayOrdersUrl: config.urls.shipdayOrders,
         }));
@@ -1283,6 +1288,7 @@ export const createApp = () => {
             return;
         }
 
+        const account = normalizeAccount(request.query.account);
         const oauthState = buildOauthState();
 
         setSignedCookie({
@@ -1292,10 +1298,16 @@ export const createApp = () => {
             maxAgeSeconds: OAUTH_STATE_MAX_AGE_SECONDS,
         });
 
+        // Якщо знаємо account — йдемо одразу на subdomain, щоб Poster не губив state
+        // на проміжній сторінці joinposter.com (там запитується "URL акаунта" і state не передається далі).
+        const oauthBaseUrl = account
+            ? `https://${account}.joinposter.com/api/auth`
+            : config.poster.oauthBaseUrl;
+
         const oauthUrl = buildPosterOauthUrl({
             applicationId: config.poster.applicationId,
             redirectUri: config.urls.oauthCallback,
-            oauthBaseUrl: config.poster.oauthBaseUrl,
+            oauthBaseUrl,
             state: oauthState.nonce,
         });
 
